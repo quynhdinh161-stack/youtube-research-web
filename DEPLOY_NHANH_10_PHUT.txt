@@ -1,0 +1,10 @@
+1. Tạo Supabase project miễn phí.
+2. Mở SQL Editor, chạy file supabase_schema.sql.
+3. Lấy Project URL và service_role key trong Project Settings > API.
+4. Tạo GitHub repository, upload toàn bộ mã nguồn.
+5. Vào Streamlit Community Cloud > Create app > chọn repo > app.py.
+6. Advanced settings > Secrets, dán:
+YOUTUBE_API_KEY = "..."
+SUPABASE_URL = "..."
+SUPABASE_KEY = "..."
+7. Deploy. Sau vài phút sẽ có link web dùng cho team.
