@@ -1,0 +1,20 @@
+FILE ĐÃ SỬA
+- app.py
+- tracker/service_web.py
+- tracker/supabase_store.py
+- tracker/youtube_api.py
+- README.md
+- HUONG_DAN_CAP_NHAT.md
+- DEPLOY_NHANH_10_PHUT.txt
+- BAO_CAO_KIEM_TRA.md
+- supabase_schema.sql (chỉ thêm ghi chú dẫn sang migration)
+
+FILE MỚI
+- tracker/market_service.py
+- supabase_market_migration.sql
+- DANH_SACH_FILE_DA_SUA.txt
+
+KHÔNG THAY ĐỔI SECRETS
+- Không chứa YOUTUBE_API_KEY thật.
+- Không chứa SUPABASE_KEY thật.
+- Không cần sửa .streamlit/secrets.toml.

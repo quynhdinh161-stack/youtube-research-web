@@ -35,3 +35,5 @@ alter table public.channels enable row level security;
 alter table public.videos enable row level security;
 alter table public.snapshots enable row level security;
 -- Không cần policy khi dùng SUPABASE service_role key trong Streamlit Secrets.
+
+-- Các bảng nghiên cứu toàn thị trường nằm trong file supabase_market_migration.sql.

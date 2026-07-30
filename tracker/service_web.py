@@ -160,17 +160,25 @@ def add_outlier_scores(
     minimum_baseline_videos: int = 5,
 ) -> list[dict[str, Any]]:
     """
-    Compare each video with the median of up to 20 older videos from the same channel.
+    Compare a video with the median of older videos from the same channel *and type*.
 
-    This avoids a single viral video inflating an average and is closer to the channel's
-    normal performance than comparing unrelated channels with one another.
+    Shorts are compared only with Shorts and long videos only with long videos. A score is
+    returned only when at least ``minimum_baseline_videos`` valid baseline videos exist;
+    this prevents one or two tiny videos from creating misleading ratios in the thousands.
     """
     baseline_size = max(10, min(int(baseline_size), 30))
     minimum_baseline_videos = max(3, min(int(minimum_baseline_videos), baseline_size))
 
-    grouped: dict[str, list[dict[str, Any]]] = {}
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for video in videos:
-        grouped.setdefault(str(video.get("channel_id", "")), []).append(video)
+        seconds = int(video.get("duration_seconds", 0) or 0)
+        if not seconds:
+            seconds = duration_to_seconds(str(video.get("duration", "")))
+        kind = "shorts" if 0 < seconds <= 180 else "long"
+        key = (str(video.get("channel_id", "")), kind)
+        row = dict(video)
+        row["video_type"] = kind
+        grouped.setdefault(key, []).append(row)
 
     now = datetime.now(timezone.utc)
     output: list[dict[str, Any]] = []
@@ -182,15 +190,23 @@ def add_outlier_scores(
         )
         all_views = [int(row.get("view_count", 0) or 0) for row in ordered]
         for index, video in enumerate(ordered):
-            older_views = all_views[index + 1 : index + 1 + baseline_size]
+            older_views = [
+                value for value in all_views[index + 1 : index + 1 + baseline_size] if value > 0
+            ]
             if len(older_views) < minimum_baseline_videos:
-                fallback = all_views[:index] + all_views[index + 1 :]
+                fallback = [
+                    value
+                    for position, value in enumerate(all_views)
+                    if position != index and value > 0
+                ]
                 older_views = fallback[:baseline_size]
-            baseline = median(older_views) if older_views else 0
 
+            reliable = len(older_views) >= minimum_baseline_videos
+            baseline = median(older_views) if reliable else 0
             row = dict(video)
             row["channel_median_views"] = int(baseline or 0)
             row["baseline_video_count"] = len(older_views)
+            row["outlier_reliable"] = reliable
             views = int(video.get("view_count", 0) or 0)
             row["outlier_score"] = round(views / baseline, 2) if baseline else 0
             published = parse_datetime(video.get("published_at"))

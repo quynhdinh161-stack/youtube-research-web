@@ -30,11 +30,13 @@ class YouTubeDataAPI:
         self.api_key = api_key.strip()
         self.timeout = timeout
         self.calls = 0
+        self.quota_units_estimated = 0
         self.session = requests.Session()
 
     def _get(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
         params = {**params, "key": self.api_key}
         self.calls += 1
+        self.quota_units_estimated += 100 if endpoint == "search" else 1
         try:
             response = self.session.get(
                 f"{self.BASE_URL}/{endpoint}", params=params, timeout=self.timeout
@@ -169,6 +171,7 @@ class YouTubeDataAPI:
         region_code: str | None = None,
         published_after: str | None = None,
         order: str = "viewCount",
+        relevance_language: str | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {
             "part": "snippet",
@@ -181,6 +184,8 @@ class YouTubeDataAPI:
             params["regionCode"] = region_code
         if published_after:
             params["publishedAfter"] = published_after
+        if relevance_language:
+            params["relevanceLanguage"] = relevance_language
         data = self._get("search", params)
         ids = [item.get("id", {}).get("videoId") for item in data.get("items", [])]
         ids = [x for x in ids if x]
@@ -205,6 +210,9 @@ class YouTubeDataAPI:
                 "comment_count": to_int(stats.get("commentCount")),
                 "duration": item.get("contentDetails", {}).get("duration", ""),
                 "thumbnail_url": self._best_thumbnail(snippet.get("thumbnails", {})),
+                "default_language": snippet.get("defaultLanguage", ""),
+                "default_audio_language": snippet.get("defaultAudioLanguage", ""),
+                "category_id": snippet.get("categoryId", ""),
             })
         order_map = {v: i for i, v in enumerate(ids)}
         return sorted(rows, key=lambda x: order_map.get(x["video_id"], 9999))

@@ -29,6 +29,29 @@ SNAPSHOT_SELECT = (
     "last_video_id,last_video_views"
 )
 
+MARKET_KEYWORD_SELECT = (
+    "id,keyword,normalized_keyword,subject,niche,region_code,language_code,video_type,"
+    "period_days,result_limit,scan_cycle,is_active,last_scanned_at,last_result_count,"
+    "created_at,updated_at"
+)
+
+MARKET_SCAN_SELECT = (
+    "id,keyword_id,query,normalized_query,subject,niche,region_code,language_code,"
+    "video_type,period_days,result_limit,search_order,deep_channel_limit,result_count,total_views,average_views_per_day,"
+    "unique_channels,average_subscribers,api_units_estimated,deep_channels_analyzed,"
+    "status,error_message,scanned_at"
+)
+
+MARKET_RESULT_SELECT = (
+    "id,scan_id,keyword_id,source_keyword,subject,niche,region_code,language_code,"
+    "video_type,video_id,channel_id,channel_title,title,published_at,view_count,"
+    "like_count,comment_count,duration,duration_seconds,thumbnail_url,views_per_day,"
+    "channel_subscriber_count,channel_total_view_count,channel_video_count,"
+    "channel_country,channel_thumbnail_url,channel_published_at,"
+    "channel_uploads_playlist_id,channel_baseline_views,baseline_video_count,"
+    "outlier_score,discovered_at"
+)
+
 
 class SupabaseStore:
     def __init__(self, url: str, key: str, timeout: int = 30):
@@ -225,6 +248,233 @@ class SupabaseStore:
             order="captured_date.desc",
             limit=limit,
             filters=filters,
+        )
+
+    def market_schema_ready(self) -> bool:
+        """Return False only when the Stage 2 tables have not been created yet."""
+        try:
+            self._request(
+                "GET",
+                "market_keywords",
+                params={"select": "id", "limit": "1"},
+            )
+            return True
+        except StoreError as exc:
+            message = str(exc).lower()
+            if "market_keywords" in message and ("does not exist" in message or "pgrst205" in message or "42p01" in message):
+                return False
+            raise
+
+    def list_market_keywords(
+        self,
+        *,
+        active_only: bool = False,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        filters = {"is_active": "eq.true"} if active_only else None
+        return self._list_paginated(
+            "market_keywords",
+            select=MARKET_KEYWORD_SELECT,
+            order="updated_at.desc",
+            limit=limit,
+            filters=filters,
+        )
+
+    def get_market_keyword(self, keyword_id: int) -> dict[str, Any] | None:
+        rows = self._request(
+            "GET",
+            "market_keywords",
+            params={
+                "select": MARKET_KEYWORD_SELECT,
+                "id": f"eq.{int(keyword_id)}",
+                "limit": "1",
+            },
+        )
+        return rows[0] if rows else None
+
+    def upsert_market_keyword(self, keyword: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "id", "keyword", "normalized_keyword", "subject", "niche",
+            "region_code", "language_code", "video_type", "period_days",
+            "result_limit", "scan_cycle", "is_active", "last_scanned_at",
+            "last_result_count", "created_at", "updated_at",
+        }
+        payload = {key: value for key, value in keyword.items() if key in allowed}
+        rows = self._request(
+            "POST",
+            "market_keywords",
+            params={
+                "on_conflict": "normalized_keyword,region_code,language_code,video_type"
+            },
+            json=[payload],
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+        if not rows:
+            raise StoreError("Supabase không trả lại từ khóa vừa lưu")
+        return rows[0]
+
+    def update_market_keyword(self, keyword_id: int, changes: dict[str, Any]) -> None:
+        allowed = {
+            "keyword", "normalized_keyword", "subject", "niche", "region_code",
+            "language_code", "video_type", "period_days", "result_limit",
+            "scan_cycle", "is_active", "last_scanned_at", "last_result_count",
+            "updated_at",
+        }
+        payload = {key: value for key, value in changes.items() if key in allowed}
+        if not payload:
+            return
+        self._request(
+            "PATCH",
+            "market_keywords",
+            params={"id": f"eq.{int(keyword_id)}"},
+            json=payload,
+            prefer="return=minimal",
+        )
+
+    def delete_market_keyword(self, keyword_id: int) -> None:
+        self._request(
+            "DELETE",
+            "market_keywords",
+            params={"id": f"eq.{int(keyword_id)}"},
+            prefer="return=minimal",
+        )
+
+    def insert_market_scan(self, scan: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "keyword_id", "query", "normalized_query", "subject", "niche",
+            "region_code", "language_code", "video_type", "period_days",
+            "result_limit", "search_order", "deep_channel_limit", "result_count", "total_views",
+            "average_views_per_day", "unique_channels", "average_subscribers",
+            "api_units_estimated", "deep_channels_analyzed", "status",
+            "error_message", "scanned_at",
+        }
+        payload = {key: value for key, value in scan.items() if key in allowed}
+        rows = self._request(
+            "POST",
+            "market_scans",
+            json=[payload],
+            prefer="return=representation",
+        )
+        if not rows:
+            raise StoreError("Supabase không trả lại phiên quét vừa lưu")
+        return rows[0]
+
+    def update_market_scan(self, scan_id: int, changes: dict[str, Any]) -> None:
+        allowed = {
+            "result_count", "total_views", "average_views_per_day",
+            "unique_channels", "average_subscribers", "api_units_estimated",
+            "deep_channels_analyzed", "status", "error_message",
+        }
+        payload = {key: value for key, value in changes.items() if key in allowed}
+        if not payload:
+            return
+        self._request(
+            "PATCH",
+            "market_scans",
+            params={"id": f"eq.{int(scan_id)}"},
+            json=payload,
+            prefer="return=minimal",
+        )
+
+    def list_market_scans(
+        self,
+        *,
+        keyword_id: int | None = None,
+        limit: int = 2000,
+    ) -> list[dict[str, Any]]:
+        filters = {"keyword_id": f"eq.{int(keyword_id)}"} if keyword_id is not None else None
+        return self._list_paginated(
+            "market_scans",
+            select=MARKET_SCAN_SELECT,
+            order="scanned_at.desc",
+            limit=limit,
+            filters=filters,
+        )
+
+    def get_recent_market_scan(
+        self,
+        *,
+        normalized_query: str,
+        region_code: str,
+        language_code: str,
+        video_type: str,
+        period_days: int,
+        result_limit: int,
+        search_order: str,
+        deep_channel_limit: int,
+        scanned_after: str,
+        keyword_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        params: dict[str, Any] = {
+            "select": MARKET_SCAN_SELECT,
+            "normalized_query": f"eq.{normalized_query}",
+            "region_code": f"eq.{region_code}",
+            "language_code": f"eq.{language_code}",
+            "video_type": f"eq.{video_type}",
+            "period_days": f"eq.{int(period_days)}",
+            "result_limit": f"eq.{int(result_limit)}",
+            "search_order": f"eq.{search_order}",
+            "deep_channel_limit": f"eq.{int(deep_channel_limit)}",
+            "status": "eq.success",
+            "scanned_at": f"gte.{scanned_after}",
+            "order": "scanned_at.desc",
+            "limit": "1",
+        }
+        if keyword_id is not None:
+            params["keyword_id"] = f"eq.{int(keyword_id)}"
+        rows = self._request(
+            "GET",
+            "market_scans",
+            params=params,
+        )
+        return rows[0] if rows else None
+
+    def insert_market_results(self, results: Iterable[dict[str, Any]]) -> None:
+        allowed = {
+            "scan_id", "keyword_id", "source_keyword", "subject", "niche",
+            "region_code", "language_code", "video_type", "video_id",
+            "channel_id", "channel_title", "title", "published_at",
+            "view_count", "like_count", "comment_count", "duration",
+            "duration_seconds", "thumbnail_url", "views_per_day",
+            "channel_subscriber_count", "channel_total_view_count",
+            "channel_video_count", "channel_country", "channel_thumbnail_url",
+            "channel_published_at", "channel_uploads_playlist_id",
+            "channel_baseline_views", "baseline_video_count", "outlier_score",
+            "discovered_at",
+        }
+        rows = [
+            {key: value for key, value in result.items() if key in allowed}
+            for result in results
+        ]
+        if not rows:
+            return
+        for start in range(0, len(rows), 200):
+            self._request(
+                "POST",
+                "market_results",
+                params={"on_conflict": "scan_id,video_id"},
+                json=rows[start : start + 200],
+                prefer="resolution=merge-duplicates,return=minimal",
+            )
+
+    def list_market_results(
+        self,
+        *,
+        scan_id: int | None = None,
+        keyword_id: int | None = None,
+        limit: int = 10000,
+    ) -> list[dict[str, Any]]:
+        filters: dict[str, str] = {}
+        if scan_id is not None:
+            filters["scan_id"] = f"eq.{int(scan_id)}"
+        if keyword_id is not None:
+            filters["keyword_id"] = f"eq.{int(keyword_id)}"
+        return self._list_paginated(
+            "market_results",
+            select=MARKET_RESULT_SELECT,
+            order="discovered_at.desc",
+            limit=limit,
+            filters=filters or None,
         )
 
 

@@ -1,23 +1,22 @@
-# Báo cáo kiểm tra bản bàn giao
+# Báo cáo kiểm tra bản Dashboard 2 trong 1
 
 ## Đã kiểm tra thực tế
 
-- `python -m py_compile app.py tracker/*.py`: đạt.
-- `python -m compileall`: đạt.
-- Import các module `tracker.service_web`, `tracker.supabase_store`, `tracker.youtube_api`: đạt.
-- Kiểm tra hàm đổi duration YouTube sang giây: đạt.
-- Kiểm tra tính outlier và view/ngày bằng dữ liệu mẫu: đạt.
-- Kiểm tra tính tăng trưởng 7 ngày từ snapshot theo lô: đạt.
-- Kiểm tra không còn `.head(12)`, `[:12]` hoặc `limit=12`: đạt.
-- Kiểm tra hai `st.radio` đều có label không rỗng: đạt.
-- Kiểm tra 45 widget key dạng chuỗi không bị trùng: đạt.
-- Kiểm tra các truy vấn bảng lớn không dùng `select="*"`: đạt.
-- Kiểm tra không có API key thật hoặc Supabase key thật trong source: không phát hiện key thật.
+- `python -m compileall` cho toàn bộ source: đạt.
+- Import và chạy logic các module `market_service`, `service_web`, `supabase_store`, `youtube_api`: đạt.
+- Test giả lập một phiên quét thị trường gồm search, dữ liệu kênh, phân tích sâu, lưu scan và kết quả: đạt.
+- Test tính mức tăng từ khóa giữa hai phiên quét: đạt.
+- Test tổng hợp kênh mới nổi từ kết quả thị trường: đạt.
+- Test outlier tách Shorts/video dài và yêu cầu tối thiểu 5 baseline: đạt.
+- Không còn `st.radio` có label rỗng.
+- Không còn giới hạn cứng `.head(12)` hoặc `[:12]`.
+- Không tìm thấy widget key tĩnh bị trùng.
+- Không có API key hoặc Supabase key thật trong source.
 
 ## Chưa thể kiểm tra trong môi trường đóng gói
 
-- Chưa chạy được lệnh `streamlit run app.py` vì môi trường đóng gói không có package Streamlit và không truy cập được package index để cài thêm.
-- Chưa kiểm tra kết nối Supabase thật vì không sử dụng Secrets của người dùng.
-- Chưa kiểm tra YouTube API thật vì không sử dụng API key của người dùng.
+- Không chạy được giao diện Streamlit đầy đủ vì môi trường đóng gói không có package Streamlit trong kho cài đặt.
+- Không kết nối thử với Supabase và YouTube API thật vì không sử dụng Secrets của người dùng.
+- SQL migration đã được kiểm tra cấu trúc tĩnh nhưng chưa chạy trên database thật của người dùng.
 
-Sau khi deploy, dùng hai nút **Kiểm tra Supabase** và **Kiểm tra YouTube API** trong trang Cài đặt để xác nhận kết nối thật.
+Vì vậy, sau deploy cần thực hiện quy trình kiểm tra nhanh trong `HUONG_DAN_CAP_NHAT.md`.

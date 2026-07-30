@@ -1,9 +1,10 @@
-1. Giải nén ZIP và upload các file bên trong lên repository youtube-research-web.
-2. Bảo đảm app.py nằm ở thư mục gốc repository.
-3. Không upload .streamlit/secrets.toml hoặc key thật.
-4. Giữ nguyên Streamlit Secrets: YOUTUBE_API_KEY, SUPABASE_URL, SUPABASE_KEY.
-5. Commit thay đổi lên branch đang deploy, thường là main.
-6. Mở Streamlit Community Cloud và chọn app hiện tại.
-7. Bấm Reboot app, không xóa app.
-8. Chờ app chạy lại rồi nhấn Ctrl + Shift + R trên trình duyệt.
-9. Bản Giai đoạn 1 không cần chạy SQL migration mới.
+1. Supabase > SQL Editor > chạy toàn bộ supabase_market_migration.sql.
+2. Kiểm tra có market_keywords, market_scans, market_results.
+3. Giải nén ZIP và thay source trong GitHub repository hiện tại.
+4. Đảm bảo app.py nằm ở thư mục gốc.
+5. Commit: Add combined tracked-channel and market research tools.
+6. Streamlit Community Cloud > Reboot app.
+7. Nhấn Ctrl + Shift + R.
+8. Cài đặt > Kiểm tra bảng thị trường.
+9. Từ khóa đã lưu > thêm 1 từ khóa > Quét ngay.
+10. Toàn thị trường > xem kết quả và thử Theo dõi kênh.

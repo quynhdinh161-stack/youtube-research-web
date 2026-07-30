@@ -1,70 +1,61 @@
-# Hướng dẫn cập nhật GitHub và Streamlit
+# Hướng dẫn cập nhật bản Dashboard 2 trong 1
 
-## 1. Sao lưu bản hiện tại
+## Bước 1 — Chạy SQL migration trước
 
-Tải repository hiện tại từ GitHub về máy hoặc tạo một branch sao lưu trước khi thay source.
+1. Mở Supabase của dự án.
+2. Chọn **SQL Editor** → **New query**.
+3. Mở file `supabase_market_migration.sql` trong ZIP.
+4. Sao chép toàn bộ nội dung vào SQL Editor.
+5. Bấm **Run**.
+6. Kiểm tra Table Editor có ba bảng:
+   - `market_keywords`
+   - `market_scans`
+   - `market_results`
 
-## 2. Thay source trên GitHub
+Migration không xóa hoặc sửa dữ liệu trong `channels`, `videos`, `snapshots`.
 
-Giải nén file ZIP mới. Upload **các file và thư mục bên trong** lên đúng repository `youtube-research-web`.
+## Bước 2 — Cập nhật GitHub
 
-Cấu trúc ở cấp gốc phải có:
-
-```text
-app.py
-requirements.txt
-supabase_schema.sql
-tracker/
-.streamlit/
-```
-
-Không để thành:
-
-```text
-youtube-research-web/youtube_research_web_clean/app.py
-```
-
-Main file path của Streamlit vẫn là:
+1. Tải ZIP và giải nén.
+2. Sao lưu repository hiện tại trước khi thay.
+3. Thay source cũ bằng toàn bộ nội dung của thư mục giải nén.
+4. Đảm bảo cấu trúc đúng:
 
 ```text
-app.py
+youtube-research-web/
+├── app.py
+├── requirements.txt
+├── tracker/
+├── .streamlit/
+└── supabase_market_migration.sql
 ```
 
-Commit gợi ý:
+Không để `app.py` nằm trong một thư mục lồng mới.
+
+5. Commit với nội dung gợi ý:
 
 ```text
-Stage 1: fix loading, navigation and outlier pagination
+Add combined tracked-channel and market research tools
 ```
 
-## 3. Không thay Secrets
-
-Giữ nguyên các Secrets đang dùng:
-
-- `SUPABASE_URL`
-- `SUPABASE_KEY`
-- `YOUTUBE_API_KEY`
-
-Không upload key thật lên GitHub.
-
-## 4. Reboot Streamlit
+## Bước 3 — Reboot Streamlit
 
 1. Mở Streamlit Community Cloud.
-2. Chọn app hiện tại, không xóa app.
-3. Mở phần quản lý app.
-4. Bấm **Reboot app**.
-5. Sau khi app chạy lại, mở trang web.
-6. Nhấn `Ctrl + Shift + R` để tải lại cứng trình duyệt.
+2. Chọn app đang chạy.
+3. Bấm **Reboot app**.
+4. Chờ app chạy lại.
+5. Trên trình duyệt nhấn **Ctrl + Shift + R**.
 
-## 5. Kiểm tra nhanh sau deploy
+Không cần đổi Secrets.
 
-- Menu sidebar hiển thị đủ 9 trang.
-- Mở Tổng quan không xuất hiện tiến trình quét YouTube.
-- Video vượt trội có bộ lọc và phân trang.
-- Không còn chỉ hiện 12 video.
-- Nút Quét dữ liệu mới yêu cầu xác nhận.
-- Kênh theo dõi chỉ quét khi bấm nút.
-- Cài đặt báo Supabase và YouTube API đã cấu hình.
+## Bước 4 — Kiểm tra
 
-## 6. SQL migration
+1. Vào **Cài đặt** → bấm **Kiểm tra bảng thị trường**.
+2. Vào **Từ khóa đã lưu** → thêm một từ khóa thử.
+3. Bấm **Quét ngay**.
+4. Mở **Toàn thị trường** để xem video đã lưu.
+5. Thử nút **Theo dõi kênh** trên một kết quả.
+6. Sang **Kênh theo dõi**, chọn kênh vừa thêm và bấm quét để lấy dữ liệu đầy đủ.
+7. Quét lại cùng từ khóa sau một khoảng thời gian để trang **Từ khóa tăng trong tuần** có dữ liệu so sánh.
 
-Không có migration mới trong Giai đoạn 1. Không cần chạy lại SQL nếu các bảng `channels`, `videos`, `snapshots` đã tồn tại.
+Nên thử với một từ khóa và 0–5 kênh phân tích sâu trước, chưa quét đồng loạt 20 từ khóa ngay lần đầu.
