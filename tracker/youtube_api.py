@@ -5,7 +5,7 @@ from typing import Any
 
 import requests
 
-from .config import REQUEST_TIMEOUT_SECONDS
+REQUEST_TIMEOUT_SECONDS = 30
 from .utils import (
     canonical_channel_url,
     chunked,
