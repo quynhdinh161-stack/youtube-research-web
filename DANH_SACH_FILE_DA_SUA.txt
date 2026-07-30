@@ -1,20 +1,19 @@
-FILE ĐÃ SỬA
+BẢN AUTO DISCOVERY — FILE ĐÃ SỬA
+
 - app.py
-- tracker/service_web.py
-- tracker/supabase_store.py
-- tracker/youtube_api.py
+  + Nút Tự khám phá thị trường ngay tại Tổng quan.
+  + Khu cấu hình Tự khám phá trong trang Toàn thị trường.
+  + Progress bar, bắt lỗi từng từ khóa, cache 30 phút và bảng kết quả tóm tắt.
+  + Giới hạn tối đa 20 từ khóa hoạt động.
+
+- tracker/market_service.py
+  + Trích cụm từ 2–4 từ từ tiêu đề video đã lưu.
+  + Xếp hạng theo độ lặp lại, số kênh, độ mới và view/ngày.
+  + Loại stopword/cụm quá chung và giảm cụm gần trùng.
+  + Tự suy ra chủ đề, ngách, quốc gia và ngôn ngữ.
+
 - README.md
 - HUONG_DAN_CAP_NHAT.md
-- DEPLOY_NHANH_10_PHUT.txt
 - BAO_CAO_KIEM_TRA.md
-- supabase_schema.sql (chỉ thêm ghi chú dẫn sang migration)
 
-FILE MỚI
-- tracker/market_service.py
-- supabase_market_migration.sql
-- DANH_SACH_FILE_DA_SUA.txt
-
-KHÔNG THAY ĐỔI SECRETS
-- Không chứa YOUTUBE_API_KEY thật.
-- Không chứa SUPABASE_KEY thật.
-- Không cần sửa .streamlit/secrets.toml.
+Không sửa schema Supabase. Không cần chạy SQL mới nếu ba bảng market đã có.

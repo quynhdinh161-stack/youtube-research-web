@@ -1,10 +1,10 @@
-1. Supabase > SQL Editor > chạy toàn bộ supabase_market_migration.sql.
-2. Kiểm tra có market_keywords, market_scans, market_results.
-3. Giải nén ZIP và thay source trong GitHub repository hiện tại.
-4. Đảm bảo app.py nằm ở thư mục gốc.
-5. Commit: Add combined tracked-channel and market research tools.
-6. Streamlit Community Cloud > Reboot app.
-7. Nhấn Ctrl + Shift + R.
-8. Cài đặt > Kiểm tra bảng thị trường.
-9. Từ khóa đã lưu > thêm 1 từ khóa > Quét ngay.
-10. Toàn thị trường > xem kết quả và thử Theo dõi kênh.
+1. Nếu Supabase đã có market_keywords, market_scans, market_results thì KHÔNG chạy SQL lại.
+2. Giải nén ZIP và thay source trong GitHub repository hiện tại.
+3. Đảm bảo app.py nằm ở thư mục gốc.
+4. Commit: Add automatic market discovery from tracked channels.
+5. Streamlit Community Cloud > Reboot app.
+6. Nhấn Ctrl + Shift + R.
+7. Tổng quan > bấm Tự khám phá thị trường.
+8. Chờ tool tự chọn 5 cụm từ và quét toàn YouTube.
+9. Toàn thị trường > xem bảng tóm tắt và kết quả.
+10. Từ khóa đã lưu > kiểm tra các dòng có chu kỳ auto-discovery.

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from statistics import median
+import html
+import math
+import re
 from typing import Any
 
 from .classifier import classify_channel
@@ -56,6 +59,296 @@ def build_keyword_payload(
         "updated_at": utc_now_iso(),
     }
 
+
+
+# Các từ quá chung hoặc từ chức năng thường xuất hiện trong tiêu đề nhưng không tạo
+# thành một truy vấn thị trường hữu ích. Danh sách cố ý ngắn để không làm mất các
+# cụm ngách hiếm.
+_DISCOVERY_STOPWORDS: dict[str, set[str]] = {
+    "en": {
+        "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
+        "how", "in", "is", "it", "its", "of", "on", "or", "that", "the", "their",
+        "this", "to", "was", "were", "what", "when", "where", "who", "why", "with",
+        "you", "your", "we", "our", "they", "them", "his", "her", "into", "after",
+        "before", "over", "under", "than", "then", "now", "today",
+    },
+    "vi": {
+        "và", "là", "của", "cho", "trong", "trên", "dưới", "với", "một", "những",
+        "các", "đã", "đang", "sẽ", "khi", "sau", "trước", "từ", "đến", "về", "này",
+        "đó", "tại", "như", "thì", "mà", "hay", "hoặc", "được", "bị", "có", "không",
+    },
+    "es": {
+        "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "y",
+        "o", "en", "con", "por", "para", "que", "como", "cuando", "donde", "su",
+        "sus", "este", "esta", "estos", "estas", "al", "se", "es", "son",
+    },
+    "pt": {
+        "o", "a", "os", "as", "um", "uma", "uns", "umas", "de", "do", "da", "dos",
+        "das", "e", "ou", "em", "com", "por", "para", "que", "como", "quando", "onde",
+        "seu", "sua", "seus", "suas", "este", "esta", "ao", "é", "são",
+    },
+    "id": {
+        "dan", "atau", "di", "ke", "dari", "untuk", "yang", "ini", "itu", "dengan",
+        "pada", "oleh", "sebagai", "adalah", "akan", "sudah", "telah", "saat", "ketika",
+    },
+    "fr": {
+        "le", "la", "les", "un", "une", "des", "de", "du", "et", "ou", "en", "avec",
+        "pour", "par", "que", "qui", "quoi", "quand", "où", "son", "sa", "ses", "ce",
+        "cette", "ces", "est", "sont", "au", "aux",
+    },
+    "de": {
+        "der", "die", "das", "ein", "eine", "einer", "eines", "und", "oder", "in", "im",
+        "mit", "von", "für", "zu", "zum", "zur", "auf", "ist", "sind", "wie", "was",
+        "wann", "wo", "dieser", "diese", "dieses",
+    },
+}
+
+_DISCOVERY_GENERIC_WORDS = {
+    "video", "videos", "official", "full", "episode", "episodes", "part", "shorts",
+    "short", "live", "new", "latest", "today", "watch", "viral", "amazing", "shocking",
+    "incredible", "unbelievable", "best", "top", "compilation", "moments", "moment",
+    "youtube", "channel", "update", "news", "review", "reaction", "trailer", "clip", "clips",
+    "tập", "phần", "mới", "hôm", "nay", "chính", "thức", "xem", "cực", "sốc",
+    "nuevo", "nueva", "oficial", "completo", "completa", "episodio", "parte",
+    "novo", "nova", "oficial", "completo", "completa", "episódio",
+}
+
+_COUNTRY_LANGUAGE = {
+    "US": "en", "GB": "en", "CA": "en", "AU": "en", "NZ": "en",
+    "VN": "vi", "ES": "es", "MX": "es", "AR": "es", "CO": "es",
+    "BR": "pt", "PT": "pt", "ID": "id", "FR": "fr", "DE": "de",
+    "AT": "de", "CH": "de", "TH": "th", "JP": "ja", "KR": "ko",
+}
+
+
+def _title_tokens(value: str) -> list[str]:
+    cleaned = html.unescape(str(value or "")).lower().replace("&", " and ")
+    return [
+        token.strip("_-")
+        for token in re.findall(r"[^\W_]+(?:['’-][^\W_]+)?", cleaned, flags=re.UNICODE)
+        if token.strip("_-")
+    ]
+
+
+def _infer_language(text: str, country: str) -> str:
+    tokens = _title_tokens(text)
+    unique_tokens = set(tokens)
+    scores = {
+        language: len(unique_tokens & stopwords)
+        for language, stopwords in _DISCOVERY_STOPWORDS.items()
+    }
+    best_language, best_score = max(scores.items(), key=lambda item: item[1]) if scores else ("en", 0)
+    if best_score >= 2:
+        return best_language
+    return _COUNTRY_LANGUAGE.get(str(country or "").upper(), "en")
+
+
+def _candidate_phrases(title: str) -> set[str]:
+    tokens = _title_tokens(title)
+    if len(tokens) < 2:
+        return set()
+    all_stopwords = set().union(*_DISCOVERY_STOPWORDS.values())
+    candidates: set[str] = set()
+    for size in (2, 3, 4):
+        for start in range(0, len(tokens) - size + 1):
+            phrase_tokens = tokens[start : start + size]
+            if phrase_tokens[0] in all_stopwords or phrase_tokens[-1] in all_stopwords:
+                continue
+            meaningful = [
+                token
+                for token in phrase_tokens
+                if token not in all_stopwords
+                and token not in _DISCOVERY_GENERIC_WORDS
+                and len(token) >= 3
+                and not token.isdigit()
+            ]
+            if len(meaningful) < 2:
+                continue
+            if len(set(phrase_tokens)) < max(2, size - 1):
+                continue
+            if sum(token.isdigit() for token in phrase_tokens) > 1:
+                continue
+            phrase = " ".join(phrase_tokens).strip()
+            if 6 <= len(phrase) <= 72:
+                candidates.add(phrase)
+    return candidates
+
+
+def discover_market_keywords(
+    videos: list[dict[str, Any]],
+    channels: list[dict[str, Any]],
+    *,
+    lookback_days: int = 30,
+    top_n: int = 10,
+    minimum_videos: int = 2,
+    minimum_channels: int = 2,
+) -> list[dict[str, Any]]:
+    """Find useful market search phrases from tracked-channel video titles.
+
+    This is not YouTube search volume. The ranking is based only on saved videos:
+    phrase repetition, channel diversity, recency and views per day.
+    """
+    channel_map = {str(row.get("channel_id", "")): row for row in channels}
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=max(1, int(lookback_days)))
+    recent: list[dict[str, Any]] = []
+    for video in videos:
+        published = parse_datetime(video.get("published_at"))
+        if published and published >= cutoff:
+            recent.append(video)
+    # A newly installed tool may not yet have enough videos inside the requested
+    # window. Fall back to the latest saved videos instead of returning nothing.
+    if len(recent) < 20:
+        recent = sorted(
+            videos,
+            key=lambda row: row.get("published_at") or "",
+            reverse=True,
+        )[:1000]
+    else:
+        # Balance high-volume and low-volume channels so one daily-upload channel
+        # cannot dominate the candidate list. The cap also keeps Streamlit memory
+        # stable when the videos table grows to tens of thousands of rows.
+        recent = sorted(
+            recent,
+            key=lambda row: row.get("published_at") or "",
+            reverse=True,
+        )
+        per_channel: Counter[str] = Counter()
+        balanced: list[dict[str, Any]] = []
+        for video in recent:
+            channel_id = str(video.get("channel_id", ""))
+            if per_channel[channel_id] >= 25:
+                continue
+            balanced.append(video)
+            per_channel[channel_id] += 1
+            if len(balanced) >= 4000:
+                break
+        recent = balanced
+
+    stats: dict[str, dict[str, Any]] = {}
+    for video in recent:
+        title = str(video.get("title", "")).strip()
+        video_id = str(video.get("video_id", ""))
+        channel_id = str(video.get("channel_id", ""))
+        if not title or not video_id or not channel_id:
+            continue
+        channel = channel_map.get(channel_id, {})
+        published = parse_datetime(video.get("published_at"))
+        age_days = max(
+            1 / 24,
+            ((now - published).total_seconds() / 86400) if published else 1.0,
+        )
+        views = int(video.get("view_count", 0) or 0)
+        views_per_day = int(video.get("views_per_day", 0) or 0) or int(views / age_days)
+        recency_factor = 1.0 if not published else max(0.35, 1.0 - min(age_days, 120) / 180)
+        performance_weight = 1.0 + min(5.0, math.log10(max(views_per_day, 1) + 1))
+        weight = performance_weight * recency_factor
+        for phrase in _candidate_phrases(title):
+            row = stats.setdefault(
+                phrase,
+                {
+                    "keyword": phrase,
+                    "normalized_keyword": normalize_keyword(phrase),
+                    "score": 0.0,
+                    "video_ids": set(),
+                    "channel_ids": set(),
+                    "titles": [],
+                    "total_views": 0,
+                    "total_views_per_day": 0,
+                    "subjects": Counter(),
+                    "niches": Counter(),
+                    "countries": Counter(),
+                },
+            )
+            if video_id in row["video_ids"]:
+                continue
+            phrase_size = len(phrase.split())
+            length_factor = {2: 1.10, 3: 1.04, 4: 0.95}.get(phrase_size, 1.0)
+            row["score"] += weight * length_factor
+            row["video_ids"].add(video_id)
+            row["channel_ids"].add(channel_id)
+            if len(row["titles"]) < 5:
+                row["titles"].append(title)
+            row["total_views"] += views
+            row["total_views_per_day"] += views_per_day
+            subject = str(channel.get("auto_subject", "") or "").strip()
+            niche = str(channel.get("auto_niche", "") or "").strip()
+            country = str(channel.get("country", "") or "").upper().strip()
+            if subject and subject != "Chưa phân loại":
+                row["subjects"][subject] += 1
+            if niche and niche != "Chưa phân loại":
+                row["niches"][niche] += 1
+            if country:
+                row["countries"][country] += 1
+
+    eligible: list[dict[str, Any]] = []
+    for row in stats.values():
+        video_count = len(row["video_ids"])
+        channel_count = len(row["channel_ids"])
+        if video_count < max(1, int(minimum_videos)) and channel_count < max(1, int(minimum_channels)):
+            continue
+        dominant_country = row["countries"].most_common(1)[0][0] if row["countries"] else "US"
+        dominant_subject = row["subjects"].most_common(1)[0][0] if row["subjects"] else ""
+        dominant_niche = row["niches"].most_common(1)[0][0] if row["niches"] else ""
+        sample_text = " ".join(row["titles"][:3])
+        phrase_tokens = set(_title_tokens(str(row["keyword"])))
+        classification_tokens = set(
+            _title_tokens(f"{dominant_subject} {dominant_niche}")
+        )
+        classification_overlap = len(phrase_tokens & classification_tokens)
+        adjusted_score = float(row["score"]) * (1.0 + 0.22 * classification_overlap)
+        eligible.append(
+            {
+                "keyword": row["keyword"],
+                "normalized_keyword": row["normalized_keyword"],
+                "score": round(adjusted_score, 2),
+                "video_count": video_count,
+                "channel_count": channel_count,
+                "total_views": int(row["total_views"]),
+                "average_views_per_day": int(row["total_views_per_day"] / max(1, video_count)),
+                "subject": dominant_subject,
+                "niche": dominant_niche,
+                "region_code": dominant_country if len(dominant_country) == 2 else "US",
+                "language_code": _infer_language(sample_text, dominant_country),
+                "sample_titles": list(row["titles"][:3]),
+                "_video_ids": set(row["video_ids"]),
+            }
+        )
+
+    eligible.sort(
+        key=lambda row: (
+            int(row["channel_count"]),
+            int(row["video_count"]),
+            float(row["score"]),
+            int(row["average_views_per_day"]),
+        ),
+        reverse=True,
+    )
+
+    selected: list[dict[str, Any]] = []
+    selected_token_sets: list[set[str]] = []
+    selected_video_sets: list[set[str]] = []
+    for row in eligible:
+        token_set = set(_title_tokens(str(row["keyword"])))
+        video_set = set(row.get("_video_ids") or set())
+        too_similar = False
+        for prior_tokens, prior_videos in zip(selected_token_sets, selected_video_sets):
+            shared = len(token_set & prior_tokens)
+            overlap_coefficient = shared / max(1, min(len(token_set), len(prior_tokens)))
+            source_overlap = len(video_set & prior_videos) / max(1, min(len(video_set), len(prior_videos)))
+            if overlap_coefficient >= 0.50 or source_overlap >= 0.60:
+                too_similar = True
+                break
+        if too_similar:
+            continue
+        cleaned_row = dict(row)
+        cleaned_row.pop("_video_ids", None)
+        selected.append(cleaned_row)
+        selected_token_sets.append(token_set)
+        selected_video_sets.append(video_set)
+        if len(selected) >= max(1, int(top_n)):
+            break
+    return selected
 
 def _views_per_day(video: dict[str, Any], now: datetime) -> int:
     published = parse_datetime(video.get("published_at"))

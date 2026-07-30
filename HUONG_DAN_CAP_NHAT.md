@@ -1,4 +1,4 @@
-# Hướng dẫn cập nhật bản Dashboard 2 trong 1
+# Hướng dẫn cập nhật bản Dashboard 2 trong 1 — Auto Discovery
 
 ## Bước 1 — Chạy SQL migration trước
 
@@ -35,7 +35,7 @@ Không để `app.py` nằm trong một thư mục lồng mới.
 5. Commit với nội dung gợi ý:
 
 ```text
-Add combined tracked-channel and market research tools
+Add automatic market discovery from tracked channels
 ```
 
 ## Bước 3 — Reboot Streamlit
@@ -51,11 +51,18 @@ Không cần đổi Secrets.
 ## Bước 4 — Kiểm tra
 
 1. Vào **Cài đặt** → bấm **Kiểm tra bảng thị trường**.
-2. Vào **Từ khóa đã lưu** → thêm một từ khóa thử.
-3. Bấm **Quét ngay**.
-4. Mở **Toàn thị trường** để xem video đã lưu.
-5. Thử nút **Theo dõi kênh** trên một kết quả.
-6. Sang **Kênh theo dõi**, chọn kênh vừa thêm và bấm quét để lấy dữ liệu đầy đủ.
-7. Quét lại cùng từ khóa sau một khoảng thời gian để trang **Từ khóa tăng trong tuần** có dữ liệu so sánh.
+2. Mở **Tổng quan** và bấm **Tự khám phá thị trường**.
+3. Chờ tool tự chọn 5 cụm từ và quét toàn YouTube.
+4. Mở **Toàn thị trường** để xem bảng tóm tắt và kết quả đã lưu.
+5. Mở **Từ khóa đã lưu** để kiểm tra các dòng có chu kỳ `auto-discovery`.
+6. Thử nút **Theo dõi kênh** trên một kết quả.
+7. Sang **Kênh theo dõi**, chọn kênh vừa thêm và bấm quét để lấy dữ liệu đầy đủ.
+8. Quét lại sau một khoảng thời gian để trang **Từ khóa tăng trong tuần** có dữ liệu so sánh.
 
 Nên thử với một từ khóa và 0–5 kênh phân tích sâu trước, chưa quét đồng loạt 20 từ khóa ngay lần đầu.
+
+## Lưu ý quota
+
+Cấu hình mặc định Tự khám phá quét tối đa 5 từ khóa và 12 kết quả/từ khóa, không phân tích sâu. Nếu không có cache, mức tối đa ước tính khoảng 510 quota units. Quét lại trong 30 phút sẽ ưu tiên dùng dữ liệu Supabase và không gọi lại API.
+
+Bản này không cần chạy SQL migration mới nếu ba bảng `market_keywords`, `market_scans`, `market_results` đã tồn tại.

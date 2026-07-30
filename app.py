@@ -19,6 +19,7 @@ from tracker.service_web import (
 from tracker.market_service import (
     aggregate_market_channels,
     build_keyword_payload,
+    discover_market_keywords,
     estimate_market_scan_units,
     keyword_growth_rows,
     latest_results_by_video,
@@ -68,9 +69,18 @@ p,li,label{color:var(--text)}
 .kpi{border-radius:16px;padding:18px}
 .kpi-label{color:var(--muted);font-size:.82rem}
 .kpi-value{font-size:1.75rem;font-weight:800;margin-top:4px;color:var(--text)}
-.stButton>button{border-radius:10px;border:1px solid #cbd5e1;background:#ffffff;color:var(--text)}
-.stButton>button:hover{border-color:var(--accent);color:var(--accent)}
-.stButton>button[kind="primary"]{background:var(--accent);border-color:var(--accent);color:#ffffff}
+.stButton>button,[data-testid="stFormSubmitButton"]>button{
+  border-radius:10px;border:1px solid #cbd5e1;background:#ffffff;color:var(--text)
+}
+.stButton>button:hover,[data-testid="stFormSubmitButton"]>button:hover{
+  border-color:var(--accent);color:var(--accent)
+}
+.stButton>button[kind="primary"],[data-testid="stFormSubmitButton"]>button[kind="primary"]{
+  background:var(--accent)!important;border-color:var(--accent)!important;color:#ffffff!important
+}
+.stButton>button:disabled,[data-testid="stFormSubmitButton"]>button:disabled{
+  opacity:.55;cursor:not-allowed
+}
 .stTextInput input,.stTextArea textarea,.stSelectbox div[data-baseweb="select"],.stNumberInput input{
   background:#ffffff!important;color:var(--text)!important;border-color:#cbd5e1!important
 }
@@ -497,6 +507,173 @@ def execute_market_scan_ui(
         return None
 
 
+
+def render_auto_discovery_summary() -> None:
+    summary = st.session_state.get("auto_discovery_summary")
+    if not summary:
+        return
+    successful = int(summary.get("successful", 0) or 0)
+    total = int(summary.get("total", 0) or 0)
+    from_cache = int(summary.get("from_cache", 0) or 0)
+    total_results = int(summary.get("total_results", 0) or 0)
+    st.success(
+        f"Tự khám phá hoàn tất: {successful}/{total} từ khóa quét thành công, "
+        f"lưu {total_results} kết quả"
+        + (f", {from_cache} từ khóa dùng cache." if from_cache else ".")
+    )
+    rows = summary.get("rows") or []
+    if rows:
+        st.dataframe(
+            pd.DataFrame(rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+    errors = summary.get("errors") or []
+    if errors:
+        with st.expander(f"Xem {len(errors)} lỗi tự khám phá"):
+            for error in errors:
+                st.write(error)
+
+
+def execute_auto_discovery_ui(
+    *,
+    store: SupabaseStore,
+    api: YouTubeDataAPI | None,
+    tracked_videos: list[dict[str, Any]],
+    tracked_channels: list[dict[str, Any]],
+    lookback_days: int = 30,
+    keyword_limit: int = 5,
+    market_period_days: int = 30,
+    result_limit: int = 12,
+    deep_channel_limit: int = 0,
+    force_refresh: bool = False,
+) -> None:
+    if not api:
+        st.error("Chưa cấu hình YOUTUBE_API_KEY trong Streamlit Secrets.")
+        return
+    if not tracked_videos:
+        st.warning("Chưa có video đã lưu từ các kênh theo dõi để tự phát hiện từ khóa.")
+        return
+
+    candidates = discover_market_keywords(
+        tracked_videos,
+        tracked_channels,
+        lookback_days=int(lookback_days),
+        top_n=int(keyword_limit),
+    )
+    if not candidates:
+        st.warning(
+            "Chưa tìm được cụm từ đủ mạnh. Hãy quét dữ liệu mới cho các kênh theo dõi "
+            "hoặc tăng khoảng phân tích lên 90 ngày."
+        )
+        return
+
+    progress = st.progress(0.0, text="Đang chuẩn bị tự khám phá thị trường...")
+    rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    successful = 0
+    cached_count = 0
+    total_results = 0
+    existing_keywords = store.list_market_keywords(limit=200)
+    existing_keyword_state = {
+        (
+            str(row.get("normalized_keyword", "")),
+            str(row.get("region_code", "US")),
+            str(row.get("language_code", "en")),
+            str(row.get("video_type", "all")),
+        ): bool(row.get("is_active"))
+        for row in existing_keywords
+    }
+    active_keyword_count = sum(1 for row in existing_keywords if bool(row.get("is_active")))
+
+    for index, candidate in enumerate(candidates, start=1):
+        keyword = str(candidate.get("keyword", ""))
+        progress.progress(
+            (index - 1) / max(1, len(candidates)),
+            text=f"Đang quét {index}/{len(candidates)}: {keyword}",
+        )
+        try:
+            candidate_key = (
+                str(candidate.get("normalized_keyword", "")),
+                str(candidate.get("region_code", "US")),
+                str(candidate.get("language_code", "en")),
+                "all",
+            )
+            candidate_was_active = existing_keyword_state.get(candidate_key, False)
+            if not candidate_was_active and active_keyword_count >= 20:
+                errors.append(
+                    f"{keyword}: đã đủ 20 từ khóa hoạt động; hãy tạm dừng hoặc xóa bớt từ khóa cũ."
+                )
+                continue
+            saved = store.upsert_market_keyword(
+                build_keyword_payload(
+                    keyword=keyword,
+                    subject=str(candidate.get("subject", "")),
+                    niche=str(candidate.get("niche", "")),
+                    region_code=str(candidate.get("region_code", "US")),
+                    language_code=str(candidate.get("language_code", "en")),
+                    video_type="all",
+                    period_days=int(market_period_days),
+                    result_limit=int(result_limit),
+                    scan_cycle="auto-discovery",
+                    is_active=True,
+                )
+            )
+            if not candidate_was_active:
+                active_keyword_count += 1
+            existing_keyword_state[candidate_key] = True
+            outcome = run_market_scan(
+                store,
+                api,
+                query=keyword,
+                region_code=str(candidate.get("region_code", "US")),
+                language_code=str(candidate.get("language_code", "en")),
+                video_type="all",
+                period_days=int(market_period_days),
+                result_limit=int(result_limit),
+                subject=str(candidate.get("subject", "")),
+                niche=str(candidate.get("niche", "")),
+                keyword_id=int(saved["id"]),
+                deep_channel_limit=int(deep_channel_limit),
+                order="viewCount",
+                force_refresh=bool(force_refresh),
+            )
+            result_count = len(outcome.get("results") or [])
+            successful += 1
+            total_results += result_count
+            if outcome.get("from_cache"):
+                cached_count += 1
+            rows.append(
+                {
+                    "Từ khóa tự phát hiện": keyword,
+                    "Video nguồn": int(candidate.get("video_count", 0) or 0),
+                    "Kênh nguồn": int(candidate.get("channel_count", 0) or 0),
+                    "Quốc gia": candidate.get("region_code", ""),
+                    "Ngôn ngữ": candidate.get("language_code", ""),
+                    "Kết quả thị trường": result_count,
+                    "Nguồn": "Cache" if outcome.get("from_cache") else "YouTube API",
+                }
+            )
+        except Exception as exc:
+            errors.append(f"{keyword}: {exc}")
+
+    progress.progress(1.0, text="Đã hoàn tất tự khám phá thị trường.")
+    clear_saved_data_cache()
+    st.session_state["auto_discovery_summary"] = {
+        "successful": successful,
+        "total": len(candidates),
+        "from_cache": cached_count,
+        "total_results": total_results,
+        "rows": rows,
+        "errors": errors,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    st.session_state["flash_message"] = (
+        f"Tự khám phá thị trường hoàn tất: {successful}/{len(candidates)} từ khóa, "
+        f"{total_results} kết quả."
+    )
+    st.rerun()
+
 def filter_by_period(
     videos: list[dict[str, Any]],
     period_label: str,
@@ -625,7 +802,7 @@ def latest_timestamp(channels: list[dict[str, Any]], videos: list[dict[str, Any]
 with st.sidebar:
     st.markdown("## 🔎 YouTube Research")
     st.caption("Dashboard 2-in-1 nghiên cứu YouTube")
-    st.caption("📌 Tool 1: Kênh theo dõi · 🌍 Tool 2: Toàn thị trường")
+    st.caption("📌 Tool 1: Kênh theo dõi · 🌍 Tool 2: Tự khám phá + từ khóa")
     nav = st.radio(
         "Điều hướng",
         NAV_OPTIONS,
@@ -677,7 +854,8 @@ st.markdown(f"# {nav}")
 if nav == "Tổng quan":
     st.caption(
         "Một web, hai nguồn dữ liệu: ① các kênh bạn chủ động theo dõi và "
-        "② toàn thị trường được khám phá theo từ khóa đã lưu. Không nguồn nào tự quét khi mở trang."
+        "② toàn thị trường được tự khám phá từ tiêu đề video hoặc nghiên cứu theo từ khóa bạn nhập. "
+        "Không nguồn nào tự quét khi mở trang."
     )
     try:
         snapshots = load_saved_snapshots(supabase_url, supabase_key)
@@ -791,7 +969,8 @@ if nav == "Tổng quan":
     market_actions = st.columns([3, 1, 1])
     if market_ready:
         market_actions[0].caption(
-            "Kết quả thị trường được lưu theo từng lần quét để so sánh 24 giờ, 3 ngày, 7 ngày và 30 ngày."
+            "Có thể bấm Tự khám phá để tool tự chọn từ khóa từ 185 kênh, hoặc quét từ khóa thủ công. "
+            "Kết quả được lưu theo từng lần quét để so sánh tăng trưởng."
         )
     else:
         market_actions[0].warning(
@@ -809,6 +988,33 @@ if nav == "Tổng quan":
         on_click=lambda: st.session_state.update({"main_navigation": "Từ khóa đã lưu"}),
         key="overview_open_keywords",
     )
+
+    auto_left, auto_right = st.columns([4, 1])
+    auto_left.caption(
+        "Tự lấy tiêu đề video mới từ các kênh đang theo dõi, chọn 5 cụm từ tiềm năng, "
+        "sau đó tìm video và kênh mới trên toàn YouTube. Mặc định dùng cache 30 phút; "
+        f"tối đa khoảng {estimate_market_scan_units(0, 12) * 5} quota units nếu cả 5 từ khóa đều phải gọi API."
+    )
+    if auto_right.button(
+        "✨ Tự khám phá thị trường",
+        type="primary",
+        use_container_width=True,
+        disabled=not market_ready or api is None or not videos,
+        key="overview_auto_discovery",
+    ):
+        execute_auto_discovery_ui(
+            store=store,
+            api=api,
+            tracked_videos=videos,
+            tracked_channels=channels,
+            lookback_days=30,
+            keyword_limit=5,
+            market_period_days=30,
+            result_limit=12,
+            deep_channel_limit=0,
+            force_refresh=False,
+        )
+    render_auto_discovery_summary()
 
     preview_columns = st.columns(2)
     with preview_columns[0]:
@@ -1030,13 +1236,96 @@ elif nav == "Video vượt trội":
         )
 elif nav == "Toàn thị trường":
     st.caption(
-        "Tool ② tìm video và kênh mới trên toàn YouTube theo từ khóa. Chỉ gọi API khi bạn bấm quét; "
-        "kết quả được lưu vào Supabase để dùng lại và so sánh tăng trưởng."
+        "Tool ② có hai cách chạy: tự chọn cụm từ từ các kênh đang theo dõi hoặc dùng từ khóa bạn nhập. "
+        "Chỉ gọi API khi bạn bấm quét; kết quả được lưu vào Supabase để dùng lại và so sánh tăng trưởng."
     )
     if not market_tables_or_notice(supabase_url, supabase_key):
         st.code("supabase_market_migration.sql", language="text")
         st.stop()
 
+    st.markdown("### ✨ Tự khám phá thị trường từ các kênh đang theo dõi")
+    with st.expander(
+        "Không cần nhập từ khóa — tool tự chọn cụm từ từ tiêu đề video",
+        expanded=True,
+    ):
+        auto_columns = st.columns(5)
+        with auto_columns[0]:
+            auto_lookback = st.selectbox(
+                "Phân tích video trong",
+                [7, 30, 90],
+                index=1,
+                format_func=lambda value: f"{value} ngày",
+                key="auto_discovery_lookback",
+            )
+        with auto_columns[1]:
+            auto_keyword_limit = st.selectbox(
+                "Số từ khóa tự chọn",
+                [3, 5, 10],
+                index=1,
+                key="auto_discovery_keyword_limit",
+            )
+        with auto_columns[2]:
+            auto_market_days = st.selectbox(
+                "Tìm trên thị trường trong",
+                [7, 30, 90],
+                index=1,
+                format_func=lambda value: f"{value} ngày",
+                key="auto_discovery_market_days",
+            )
+        with auto_columns[3]:
+            auto_result_limit = st.selectbox(
+                "Kết quả mỗi từ khóa",
+                [12, 24, 50],
+                index=0,
+                key="auto_discovery_result_limit",
+            )
+        with auto_columns[4]:
+            auto_deep_limit = st.selectbox(
+                "Phân tích sâu mỗi từ khóa",
+                [0, 5, 10],
+                index=0,
+                key="auto_discovery_deep_limit",
+                help="Chọn 0 để tiết kiệm quota. Chọn 5–10 để tính outlier của các kênh mới.",
+            )
+        auto_force_refresh = st.checkbox(
+            "Bỏ cache 30 phút và gọi lại YouTube API",
+            value=False,
+            key="auto_discovery_force_refresh",
+        )
+        estimated_auto_units = estimate_market_scan_units(
+            int(auto_deep_limit), int(auto_result_limit)
+        ) * int(auto_keyword_limit)
+        st.caption(
+            "Tool xếp hạng cụm từ bằng số video lặp lại, số kênh tham gia, độ mới và view/ngày "
+            f"của dữ liệu đã lưu. Ước tính tối đa khoảng {estimated_auto_units} quota units nếu không dùng cache."
+        )
+        if st.button(
+            "✨ Tự khám phá thị trường",
+            type="primary",
+            use_container_width=True,
+            disabled=api is None or not channels,
+            key="market_auto_discovery_button",
+        ):
+            with st.spinner("Đang đọc video đã lưu từ các kênh theo dõi..."):
+                auto_tracked_videos = load_saved_videos(
+                    supabase_url, supabase_key, MAX_SAVED_VIDEOS
+                )
+            execute_auto_discovery_ui(
+                store=store,
+                api=api,
+                tracked_videos=auto_tracked_videos,
+                tracked_channels=channels,
+                lookback_days=int(auto_lookback),
+                keyword_limit=int(auto_keyword_limit),
+                market_period_days=int(auto_market_days),
+                result_limit=int(auto_result_limit),
+                deep_channel_limit=int(auto_deep_limit),
+                force_refresh=bool(auto_force_refresh),
+            )
+    render_auto_discovery_summary()
+
+    st.divider()
+    st.markdown("### Nghiên cứu thủ công theo từ khóa")
     market_keywords = load_market_keywords(supabase_url, supabase_key)
     active_keywords = [row for row in market_keywords if bool(row.get("is_active"))]
     keyword_by_id = {int(row["id"]): row for row in market_keywords}
@@ -1190,11 +1479,13 @@ elif nav == "Toàn thị trường":
         scan_submitted = st.form_submit_button(
             "Quét toàn thị trường",
             type="primary",
-            disabled=not bool(query),
+            disabled=api is None,
             use_container_width=True,
         )
 
-    if scan_submitted:
+    if scan_submitted and not query:
+        st.warning("Hãy nhập từ khóa thị trường trước khi quét.")
+    elif scan_submitted:
         keyword_id = int(selected_keyword["id"]) if selected_keyword else None
         if save_before_scan and selected_keyword is None:
             try:
@@ -2018,11 +2309,13 @@ elif nav == "Từ khóa đã lưu":
             add_submitted = st.form_submit_button(
                 "Lưu từ khóa",
                 type="primary",
-                disabled=not bool(new_keyword) or active_count >= 20,
+                disabled=active_count >= 20,
             )
         if active_count >= 20:
             st.warning("Đã có 20 từ khóa hoạt động. Hãy tạm dừng hoặc xóa một từ khóa trước khi thêm.")
-        if add_submitted:
+        if add_submitted and not new_keyword:
+            st.warning("Hãy nhập từ khóa trước khi lưu.")
+        elif add_submitted:
             try:
                 store.upsert_market_keyword(
                     build_keyword_payload(
@@ -2066,7 +2359,13 @@ elif nav == "Từ khóa đã lưu":
                 "Loại": row.get("video_type"),
                 "Khoảng quét": f"{row.get('period_days')} ngày",
                 "Số kết quả": row.get("result_limit"),
-                "Chu kỳ": row.get("scan_cycle"),
+                "Chu kỳ": {
+                    "manual": "Thủ công",
+                    "daily": "Mỗi ngày",
+                    "every_3_days": "Mỗi 3 ngày",
+                    "weekly": "Mỗi tuần",
+                    "auto-discovery": "Tự khám phá",
+                }.get(str(row.get("scan_cycle", "")), row.get("scan_cycle")),
                 "Trạng thái": "Hoạt động" if row.get("is_active") else "Tạm dừng",
                 "Quét gần nhất": row.get("last_scanned_at"),
                 "Kết quả gần nhất": row.get("last_result_count"),

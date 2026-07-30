@@ -3,7 +3,7 @@
 Một ứng dụng Streamlit dùng chung hai công cụ:
 
 1. **Theo dõi kênh đã nhập**: quản lý khoảng 185 kênh, quét video, Shorts, tăng trưởng và video vượt trội.
-2. **Nghiên cứu toàn thị trường**: tìm video/kênh mới theo từ khóa, lưu lịch sử quét vào Supabase, phát hiện từ khóa tăng và thêm kênh mới vào danh sách theo dõi.
+2. **Nghiên cứu toàn thị trường**: tự phát hiện từ khóa từ tiêu đề video của các kênh đang theo dõi hoặc tìm thủ công theo từ khóa, lưu lịch sử quét vào Supabase, phát hiện kênh mới và thêm kênh vào danh sách theo dõi.
 
 ## Tính năng chính
 
@@ -19,7 +19,10 @@ Một ứng dụng Streamlit dùng chung hai công cụ:
 
 ### Tool 2 — Toàn thị trường
 
-- Tìm theo từ khóa, quốc gia, ngôn ngữ, thời gian và loại video.
+- Nút **Tự khám phá thị trường**: đọc video đã lưu của các kênh theo dõi, trích cụm từ 2–4 từ, xếp hạng bằng độ lặp lại, số kênh, độ mới và view/ngày, sau đó tự quét toàn YouTube.
+- Tự suy ra quốc gia/ngôn ngữ từ các kênh nguồn và lưu từ khóa với chu kỳ `auto-discovery`.
+- Có thể chọn 3/5/10 từ khóa tự phát hiện, khoảng phân tích 7/30/90 ngày và 12/24/50 kết quả mỗi từ khóa.
+- Tìm thủ công theo từ khóa, quốc gia, ngôn ngữ, thời gian và loại video.
 - Chỉ gọi YouTube API khi bấm nút.
 - Cache kết quả trùng cấu hình trong Supabase 30 phút.
 - Lưu từ khóa, lịch sử quét và từng video tìm được.
@@ -95,7 +98,13 @@ Con số thực tế có thể chênh nhẹ theo số lượng kênh và lỗi A
 
 ## Giới hạn hiện tại
 
-- Không tự chạy lịch quét bên trong Streamlit. Chu kỳ lưu trong từ khóa chỉ là cấu hình chuẩn bị cho cron/GitHub Actions ở giai đoạn sau.
+- Không tự chạy lịch quét bên trong Streamlit. Nút Tự khám phá chỉ chạy khi người dùng bấm; chu kỳ lưu trong từ khóa chỉ là cấu hình chuẩn bị cho cron/GitHub Actions ở giai đoạn sau.
 - Một lần tìm lấy tối đa 50 kết quả vì giới hạn một trang `search.list` và yêu cầu tiết kiệm quota.
 - Từ khóa cần ít nhất hai lần quét ở các thời điểm khác nhau mới tính được mức tăng.
 - Kết quả thị trường chưa thể hiện lượng tìm kiếm thật của người dùng YouTube.
+
+## Cách dùng Tự khám phá thị trường
+
+- Từ **Tổng quan**, bấm trực tiếp **Tự khám phá thị trường** để chạy cấu hình mặc định: 5 từ khóa, dữ liệu nguồn 30 ngày, tìm thị trường 30 ngày, 12 kết quả/từ khóa, không phân tích sâu.
+- Hoặc mở **Toàn thị trường** để thay đổi số từ khóa, thời gian, số kết quả và mức phân tích sâu trước khi bấm.
+- Các từ khóa tự phát hiện xuất hiện trong **Từ khóa đã lưu** và dùng chung các trang Video vượt trội, Kênh mới nổi, Shorts và Từ khóa tăng trong tuần.
