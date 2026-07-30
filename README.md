@@ -1,41 +1,75 @@
-# YouTube Research Web V3
+# YouTube Research Web — Giai đoạn 1
 
-Bản web miễn phí, giao diện tối, chạy trên **Streamlit Community Cloud** và lưu dữ liệu lâu dài bằng **Supabase Free**.
+Dashboard Streamlit nghiên cứu kênh và video YouTube, lưu dữ liệu lâu dài trên Supabase.
 
-## Chức năng
+## Đã hoàn thành trong bản này
 
-- Chỉ dán link kênh, `@handle` hoặc Channel ID.
-- Tự lấy tên kênh, subscriber, tổng view, số video, video mới nhất, tần suất đăng.
-- Tự phân loại chủ đề và ngách, không cần AI trả phí.
-- Trang **Dành cho bạn** hiển thị video outlier theo hiệu suất của chính kênh.
-- Trang **Từ khóa** tìm video theo thị trường và khoảng thời gian.
-- Thư viện **Video**, **Shorts/video ngắn**, và bảng **Kênh**.
-- Lưu snapshot để tính tăng trưởng 7 ngày/30 ngày.
-- Xuất Excel.
+- Menu sidebar ổn định gồm 9 trang:
+  - Tổng quan
+  - Từ khóa tăng trong tuần
+  - Video vượt trội
+  - Toàn thị trường
+  - Kênh mới nổi
+  - Kênh theo dõi
+  - Từ khóa đã lưu
+  - Shorts
+  - Cài đặt
+- Không dùng `st.radio` với label rỗng.
+- Không tự gọi YouTube API khi mở app hoặc đổi trang.
+- Trang Tổng quan chỉ đọc dữ liệu đã lưu từ Supabase.
+- Supabase được cache 5 phút bằng `st.cache_data`.
+- Snapshot tăng trưởng được tải một lần theo lô, không gọi riêng từng kênh.
+- Truy vấn không còn dùng `select="*"` cho các bảng lớn.
+- Dữ liệu video/snapshot được đọc theo trang từ Supabase.
+- Video vượt trội:
+  - Không còn giới hạn cứng 12 video.
+  - Ngưỡng Tất cả, ≥1.2x, ≥2x, ≥5x, ≥10x, ≥20x và Kênh nhỏ bùng nổ.
+  - Bộ lọc thời gian, loại video, quốc gia, view, subscriber, chủ đề, ngách và từ khóa.
+  - Sắp xếp theo hệ số vượt trội, view/ngày, lượt xem hoặc mới nhất.
+  - 24 video mỗi trang, 4 video mỗi hàng.
+  - Chọn tối đa 20, 50, 100 hoặc 200 kết quả.
+- Outlier dùng median tối đa 20 video cũ hơn của chính kênh.
+- Quét kênh chỉ chạy khi người dùng bấm nút.
+- Quét theo batch 10 kênh, có progress bar và không dừng toàn bộ khi một kênh lỗi.
+- Quét tất cả và xóa kênh đều yêu cầu xác nhận.
+- API key chỉ đọc từ Streamlit Secrets, không có ô hiển thị key trên giao diện.
+- Bổ sung `tracker/config.py` bị thiếu trong source cũ.
 
-## Triển khai miễn phí
+## Chưa hoàn thành
 
-### Bước 1 — Tạo Supabase
+Hai trang sau được giữ trong menu nhưng chưa ghi dữ liệu vì schema hiện tại chưa có bảng phù hợp:
 
-1. Tạo một project Supabase Free.
-2. Vào **SQL Editor**, dán toàn bộ nội dung `supabase_schema.sql`, rồi Run.
-3. Vào **Project Settings → API** và lấy:
-   - Project URL
-   - `service_role` key
+- Từ khóa tăng trong tuần.
+- Từ khóa đã lưu.
 
-Không đưa `service_role` key vào GitHub.
+Trang Toàn thị trường đã tìm thủ công và cache kết quả trong phiên, nhưng chưa lưu kết quả vào Supabase. Việc lưu market scan, từ khóa và lịch sử tăng trưởng cần SQL migration riêng ở Giai đoạn 2–3.
 
-### Bước 2 — Đưa mã nguồn lên GitHub
+## Cấu trúc source
 
-1. Tạo repository mới.
-2. Upload toàn bộ thư mục này.
-3. Không upload file `.streamlit/secrets.toml`.
+```text
+youtube-research-web/
+├── .streamlit/
+│   └── config.toml
+├── tracker/
+│   ├── __init__.py
+│   ├── classifier.py
+│   ├── config.py
+│   ├── service_web.py
+│   ├── supabase_store.py
+│   ├── utils.py
+│   └── youtube_api.py
+├── app.py
+├── requirements.txt
+├── supabase_schema.sql
+├── HUONG_DAN_CAP_NHAT.md
+└── README.md
+```
 
-### Bước 3 — Deploy Streamlit Community Cloud
+`app.py` phải nằm ở thư mục gốc của repository. Không đưa toàn bộ source vào thêm một thư mục lồng nữa khi upload GitHub.
 
-1. Đăng nhập Streamlit Community Cloud và kết nối GitHub.
-2. Chọn repository, branch `main`, file chạy `app.py`.
-3. Trong **Advanced settings → Secrets**, nhập:
+## Streamlit Secrets
+
+Vào Streamlit Community Cloud → App settings → Secrets và cấu hình:
 
 ```toml
 YOUTUBE_API_KEY = "API_KEY_CUA_BAN"
@@ -43,14 +77,12 @@ SUPABASE_URL = "https://xxxxx.supabase.co"
 SUPABASE_KEY = "SERVICE_ROLE_KEY_CUA_BAN"
 ```
 
-4. Bấm Deploy. App nhận một địa chỉ dạng `ten-app.streamlit.app`.
+Không commit `.streamlit/secrets.toml` hoặc key thật lên GitHub.
 
-## Bảo mật
+## SQL
 
-- YouTube API key và Supabase service role key phải lưu trong Streamlit Secrets.
-- Không commit key lên GitHub.
-- Nếu chia sẻ app công khai, ai có link cũng có thể dùng chức năng thêm/cập nhật kênh. Nên đặt app ở chế độ private hoặc chỉ chia sẻ trong team.
+Bản Giai đoạn 1 không thêm bảng và không yêu cầu migration mới. Nếu database đã chạy `supabase_schema.sql` của bản cũ thì không cần chạy lại.
 
-## Lưu ý quota
+## Cập nhật app
 
-Nghiên cứu từ khóa dùng endpoint tìm kiếm nên tốn quota nhiều hơn cập nhật kênh. Không nên bấm tìm kiếm liên tục hoặc quét quá nhiều kênh trong một lần.
+Xem hướng dẫn chi tiết trong `HUONG_DAN_CAP_NHAT.md`.

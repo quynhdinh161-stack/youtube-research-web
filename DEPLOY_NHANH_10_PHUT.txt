@@ -1,10 +1,9 @@
-1. Tạo Supabase project miễn phí.
-2. Mở SQL Editor, chạy file supabase_schema.sql.
-3. Lấy Project URL và service_role key trong Project Settings > API.
-4. Tạo GitHub repository, upload toàn bộ mã nguồn.
-5. Vào Streamlit Community Cloud > Create app > chọn repo > app.py.
-6. Advanced settings > Secrets, dán:
-YOUTUBE_API_KEY = "..."
-SUPABASE_URL = "..."
-SUPABASE_KEY = "..."
-7. Deploy. Sau vài phút sẽ có link web dùng cho team.
+1. Giải nén ZIP và upload các file bên trong lên repository youtube-research-web.
+2. Bảo đảm app.py nằm ở thư mục gốc repository.
+3. Không upload .streamlit/secrets.toml hoặc key thật.
+4. Giữ nguyên Streamlit Secrets: YOUTUBE_API_KEY, SUPABASE_URL, SUPABASE_KEY.
+5. Commit thay đổi lên branch đang deploy, thường là main.
+6. Mở Streamlit Community Cloud và chọn app hiện tại.
+7. Bấm Reboot app, không xóa app.
+8. Chờ app chạy lại rồi nhấn Ctrl + Shift + R trên trình duyệt.
+9. Bản Giai đoạn 1 không cần chạy SQL migration mới.

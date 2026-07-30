@@ -5,7 +5,7 @@ from typing import Any
 
 import requests
 
-REQUEST_TIMEOUT_SECONDS = 30
+from .config import REQUEST_TIMEOUT_SECONDS
 from .utils import (
     canonical_channel_url,
     chunked,
@@ -50,6 +50,19 @@ class YouTubeDataAPI:
                 message = response.text
             raise YouTubeApiError(f"YouTube API {response.status_code}: {message}")
         return response.json()
+
+    def test_connection(self, region_code: str = "US") -> bool:
+        """Make one inexpensive API request to verify that the configured key works."""
+        self._get(
+            "videos",
+            {
+                "part": "id",
+                "chart": "mostPopular",
+                "regionCode": region_code,
+                "maxResults": 1,
+            },
+        )
+        return True
 
     def resolve_channel(self, reference: str) -> dict[str, Any]:
         kind, value = extract_channel_locator(reference)
