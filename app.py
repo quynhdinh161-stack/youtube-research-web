@@ -66,8 +66,39 @@ p,li,label{color:var(--text)}
   background:#ffffff!important;color:var(--text)!important;border-color:#cbd5e1!important
 }
 .stTextInput input::placeholder,.stTextArea textarea::placeholder{color:#98a2b3!important}
-[data-baseweb="popover"],[role="listbox"]{background:#ffffff!important;color:var(--text)!important}
-[data-baseweb="menu"] li{color:var(--text)!important}
+/* Fix màu Selectbox/Multiselect trên Streamlit Community Cloud.
+   BaseWeb render menu trong một portal ngoài .stApp nên phải đặt màu trực tiếp
+   cho từng phần tử và toàn bộ phần tử con. */
+[data-testid="stSelectbox"] div[data-baseweb="select"],
+[data-testid="stMultiSelect"] div[data-baseweb="select"]{
+  background:#ffffff!important;
+  color:#172033!important;
+  border-color:#cbd5e1!important;
+}
+[data-testid="stSelectbox"] div[data-baseweb="select"] *,
+[data-testid="stMultiSelect"] div[data-baseweb="select"] *{
+  color:#172033!important;
+  -webkit-text-fill-color:#172033!important;
+}
+[data-baseweb="popover"],
+[data-baseweb="popover"] > div,
+[data-baseweb="menu"],
+ul[role="listbox"],
+[role="listbox"]{
+  background:#ffffff!important;
+  color:#172033!important;
+}
+[role="option"],
+[role="option"] *,
+[data-baseweb="menu"] li,
+[data-baseweb="menu"] li *{
+  color:#172033!important;
+  -webkit-text-fill-color:#172033!important;
+  opacity:1!important;
+}
+[role="option"]{background:#ffffff!important}
+[role="option"]:hover,
+[role="option"][aria-selected="true"]{background:#eef2ff!important}
 [data-testid="stDataFrame"]{background:#ffffff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
 [data-testid="stMetric"]{background:#ffffff;border:1px solid var(--line);border-radius:12px;padding:12px}
 [data-testid="stAlert"]{border-radius:12px}
