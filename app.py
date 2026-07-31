@@ -17,8 +17,10 @@ from tracker.service_web import (
     sync_reference,
 )
 from tracker.market_service import (
+    MARKET_DISCOVERY_CATEGORIES,
     aggregate_market_channels,
     build_keyword_payload,
+    discover_keywords_from_youtube_market,
     discover_market_keywords,
     estimate_market_scan_units,
     keyword_growth_rows,
@@ -635,6 +637,143 @@ def execute_market_multi_scan_ui(
     return {"scans": scans, "results": merged_results, "errors": errors}
 
 
+
+def execute_true_market_discovery_ui(
+    *,
+    api: YouTubeDataAPI | None,
+    region_codes: list[str],
+    language_codes: list[str],
+    category_ids: list[str],
+    top_n: int,
+    videos_per_category: int,
+) -> None:
+    if not api:
+        st.error("Chưa cấu hình YOUTUBE_API_KEY trong Streamlit Secrets.")
+        return
+    if not region_codes:
+        st.warning("Hãy chọn ít nhất 1 quốc gia.")
+        return
+    if not category_ids:
+        st.warning("Hãy chọn ít nhất 1 nhóm nội dung để lấy mẫu thị trường.")
+        return
+    with st.spinner(
+        "Đang lấy bảng video phổ biến trực tiếp từ YouTube và tự tách cụm từ thị trường..."
+    ):
+        outcome = discover_keywords_from_youtube_market(
+            api,
+            region_codes=region_codes,
+            language_codes=language_codes,
+            category_ids=category_ids,
+            top_n=int(top_n),
+            videos_per_category=int(videos_per_category),
+        )
+    st.session_state["true_market_discovery"] = outcome
+    st.session_state["true_market_selected_keywords"] = []
+
+
+def render_true_market_discovery_summary(store: SupabaseStore) -> None:
+    outcome = st.session_state.get("true_market_discovery")
+    if not outcome:
+        return
+    candidates = list(outcome.get("candidates") or [])
+    st.success(
+        f"Đã phân tích {int(outcome.get('videos_analyzed', 0) or 0)} video phổ biến trực tiếp từ YouTube "
+        f"và tìm được {len(candidates)} cụm từ thị trường. "
+        f"Quota đã dùng khoảng {int(outcome.get('api_units_estimated', 0) or 0)} units."
+    )
+    st.caption(
+        "Nguồn của danh sách này là YouTube mostPopular theo quốc gia/chủ đề bạn chọn — "
+        "không lấy từ 185 kênh theo dõi và không lấy từ danh sách từ khóa đã lưu. "
+        "Điểm thị trường là tín hiệu từ mẫu video phổ biến, không phải search volume chính thức của YouTube."
+    )
+    if not candidates:
+        st.warning(
+            "Chưa đủ cụm từ lặp lại trong mẫu hiện tại. Hãy chọn thêm nhóm nội dung hoặc thêm quốc gia."
+        )
+        return
+
+    rows = []
+    for index, row in enumerate(candidates, start=1):
+        rows.append(
+            {
+                "#": index,
+                "Từ khóa thị trường": row.get("keyword", ""),
+                "Điểm": row.get("market_score", 0),
+                "Video chứa cụm": row.get("video_count", 0),
+                "Kênh": row.get("channel_count", 0),
+                "Thị trường": row.get("regions", ""),
+                "Nhóm nội dung": row.get("category_names", ""),
+                "Ngôn ngữ": row.get("language_code", ""),
+                "View/ngày TB": row.get("average_views_per_day", 0),
+                "Ví dụ tiêu đề": " | ".join(row.get("sample_titles") or []),
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    option_map = {str(row.get("keyword", "")): row for row in candidates if row.get("keyword")}
+    selected = st.multiselect(
+        "Chọn các từ khóa muốn lưu để theo dõi hoặc nghiên cứu sâu",
+        options=list(option_map),
+        key="true_market_selected_keywords",
+        placeholder="Chọn một hoặc nhiều từ khóa vừa được phát hiện",
+    )
+    action_cols = st.columns(2)
+    if action_cols[0].button(
+        "Lưu từ khóa đã chọn",
+        use_container_width=True,
+        disabled=not selected,
+        key="save_true_market_keywords",
+    ):
+        saved_count = 0
+        errors: list[str] = []
+        for keyword in selected:
+            row = option_map[keyword]
+            try:
+                store.upsert_market_keyword(
+                    build_keyword_payload(
+                        keyword=keyword,
+                        subject="Market Discovery",
+                        niche=str(row.get("category_names", ""))[:250],
+                        region_code=str(row.get("primary_region", "US")),
+                        language_code=str(row.get("language_code", "en")),
+                        video_type="all",
+                        period_days=30,
+                        result_limit=24,
+                        scan_cycle="market-chart-discovery",
+                        is_active=True,
+                    )
+                )
+                saved_count += 1
+            except Exception as exc:
+                errors.append(f"{keyword}: {exc}")
+        clear_saved_data_cache()
+        if saved_count:
+            st.success(f"Đã lưu {saved_count} từ khóa để theo dõi tiếp.")
+        if errors:
+            with st.expander(f"Có {len(errors)} lỗi khi lưu"):
+                for error in errors:
+                    st.write(error)
+
+    if action_cols[1].button(
+        "Đưa từ khóa đầu tiên sang nghiên cứu sâu",
+        use_container_width=True,
+        disabled=not selected,
+        key="deep_research_true_market_keyword",
+    ):
+        first = selected[0]
+        row = option_map[first]
+        st.session_state["market_mode"] = "Tìm nhanh"
+        st.session_state["market_prefill_query"] = first
+        st.session_state["market_prefill_region"] = str(row.get("primary_region", "US"))
+        st.session_state["market_prefill_language"] = str(row.get("language_code", "en"))
+        st.rerun()
+
+    errors = outcome.get("errors") or []
+    if errors:
+        with st.expander(f"{len(errors)} nhóm thị trường không trả dữ liệu"):
+            for error in errors[:50]:
+                st.write(error)
+
 def render_auto_discovery_summary() -> None:
     summary = st.session_state.get("auto_discovery_summary")
     if not summary:
@@ -1096,8 +1235,8 @@ if nav == "Tổng quan":
     market_actions = st.columns([3, 1, 1])
     if market_ready:
         market_actions[0].caption(
-            "Có thể bấm Tự khám phá để tool tự chọn từ khóa từ 185 kênh, hoặc quét từ khóa thủ công. "
-            "Kết quả được lưu theo từng lần quét để so sánh tăng trưởng."
+            "Tool có thể tự tìm cụm từ đang nổi trực tiếp từ thị trường YouTube, không cần từ khóa mồi "
+            "và không phụ thuộc 185 kênh theo dõi; sau đó bạn có thể lưu hoặc quét sâu từng từ khóa."
         )
     else:
         market_actions[0].warning(
@@ -1116,32 +1255,19 @@ if nav == "Tổng quan":
         key="overview_open_keywords",
     )
 
-    auto_left, auto_right = st.columns([4, 1])
-    auto_left.caption(
-        "Tự lấy tiêu đề video mới từ các kênh đang theo dõi, chọn 5 cụm từ tiềm năng, "
-        "sau đó tìm video và kênh mới trên toàn YouTube. Mặc định dùng cache 30 phút; "
-        f"tối đa khoảng {estimate_market_scan_units(0, 12) * 5} quota units nếu cả 5 từ khóa đều phải gọi API."
+    discover_left, discover_right = st.columns([4, 1])
+    discover_left.caption(
+        "Muốn tự tìm từ khóa đang nổi trên thị trường: mở Toàn thị trường → mục "
+        "🔥 Tự tìm từ khóa thị trường. Nguồn lấy trực tiếp từ bảng video phổ biến của YouTube."
     )
-    if auto_right.button(
-        "✨ Tự khám phá thị trường",
+    discover_right.button(
+        "🔥 Tìm từ khóa thị trường",
         type="primary",
         use_container_width=True,
-        disabled=not market_ready or api is None or not videos,
-        key="overview_auto_discovery",
-    ):
-        execute_auto_discovery_ui(
-            store=store,
-            api=api,
-            tracked_videos=videos,
-            tracked_channels=channels,
-            lookback_days=30,
-            keyword_limit=5,
-            market_period_days=30,
-            result_limit=12,
-            deep_channel_limit=0,
-            force_refresh=False,
-        )
-    render_auto_discovery_summary()
+        disabled=not market_ready or api is None,
+        on_click=lambda: st.session_state.update({"main_navigation": "Toàn thị trường"}),
+        key="overview_true_market_discovery",
+    )
 
     preview_columns = st.columns(2)
     with preview_columns[0]:
@@ -1363,17 +1489,88 @@ elif nav == "Video vượt trội":
         )
 elif nav == "Toàn thị trường":
     st.caption(
-        "Tool ② có hai cách chạy: tự chọn cụm từ từ các kênh đang theo dõi hoặc dùng từ khóa bạn nhập. "
-        "Chỉ gọi API khi bạn bấm quét; kết quả được lưu vào Supabase để dùng lại và so sánh tăng trưởng."
+        "Tool ② có 3 cách: tự tìm từ khóa trực tiếp từ thị trường YouTube, phân tích thêm từ 185 kênh theo dõi, "
+        "hoặc nghiên cứu một từ khóa thủ công. API chỉ chạy khi bạn bấm nút."
     )
     if not market_tables_or_notice(supabase_url, supabase_key):
         st.code("supabase_market_migration.sql", language="text")
         st.stop()
 
-    st.markdown("### ✨ Tự khám phá thị trường từ các kênh đang theo dõi")
+    st.markdown("### 🔥 Tự tìm từ khóa đang nổi trên thị trường")
+    st.caption(
+        "Chế độ này KHÔNG dùng từ khóa đã lưu và KHÔNG dùng dữ liệu 185 kênh. "
+        "Tool lấy trực tiếp video đang nằm trong bảng mostPopular của YouTube theo quốc gia và nhóm nội dung, "
+        "sau đó tự tách và xếp hạng các cụm từ đang xuất hiện mạnh."
+    )
+    discovery_regions_all = ["US", "GB", "CA", "AU", "MX", "ES", "BR", "FR", "DE", "ID", "VN", "TH", "JP", "KR"]
+    discovery_languages_all = ["en", "es", "pt", "fr", "de", "id", "vi", "th", "ja", "ko"]
+    default_category_ids = ["2", "15", "17", "19", "22", "24", "25", "26", "27", "28"]
+    with st.expander("Thiết lập phạm vi thị trường", expanded=True):
+        discovery_cols = st.columns([1.2, 1.2, 2.4, 1, 1])
+        with discovery_cols[0]:
+            discovery_regions = st.multiselect(
+                "Quốc gia",
+                discovery_regions_all,
+                default=["US"],
+                key="true_discovery_regions",
+            )
+        with discovery_cols[1]:
+            discovery_languages = st.multiselect(
+                "Ngôn ngữ",
+                discovery_languages_all,
+                default=["en"],
+                key="true_discovery_languages",
+                help="Để trống nếu muốn nhận mọi ngôn ngữ xuất hiện trong thị trường đã chọn.",
+            )
+        with discovery_cols[2]:
+            discovery_categories = st.multiselect(
+                "Nhóm nội dung lấy mẫu",
+                options=list(MARKET_DISCOVERY_CATEGORIES),
+                default=default_category_ids,
+                format_func=lambda category_id: MARKET_DISCOVERY_CATEGORIES.get(category_id, category_id),
+                key="true_discovery_categories",
+            )
+        with discovery_cols[3]:
+            discovery_top_n = st.selectbox(
+                "Số từ khóa",
+                [20, 50, 100],
+                index=1,
+                key="true_discovery_top_n",
+            )
+        with discovery_cols[4]:
+            discovery_sample_size = st.selectbox(
+                "Video/nhóm",
+                [20, 50],
+                index=1,
+                key="true_discovery_sample_size",
+            )
+        discovery_requests = len(discovery_regions) * len(discovery_categories)
+        st.caption(
+            f"Ước tính {discovery_requests} quota units cho lần khám phá này "
+            "(videos.list mostPopular chỉ khoảng 1 unit/request). Không dùng search.list ở bước tìm từ khóa."
+        )
+        if st.button(
+            "🔥 Tự tìm từ khóa thị trường",
+            type="primary",
+            use_container_width=True,
+            disabled=api is None or not discovery_regions or not discovery_categories,
+            key="true_market_discovery_button",
+        ):
+            execute_true_market_discovery_ui(
+                api=api,
+                region_codes=discovery_regions,
+                language_codes=discovery_languages,
+                category_ids=discovery_categories,
+                top_n=int(discovery_top_n),
+                videos_per_category=int(discovery_sample_size),
+            )
+    render_true_market_discovery_summary(store)
+
+    st.divider()
+    st.markdown("### 📌 Phân tích thêm từ các kênh đang theo dõi")
     with st.expander(
-        "Không cần nhập từ khóa — tool tự chọn cụm từ từ tiêu đề video",
-        expanded=True,
+        "Tùy chọn: lấy ý tưởng từ tiêu đề 185 kênh theo dõi",
+        expanded=False,
     ):
         auto_columns = st.columns(5)
         with auto_columns[0]:
@@ -1493,9 +1690,12 @@ elif nav == "Toàn thị trường":
         selected_keyword = keyword_by_id[int(selected_id)]
 
     config_key = str(selected_keyword.get("id")) if selected_keyword else "quick"
-    default_query = str(selected_keyword.get("keyword", "")) if selected_keyword else ""
-    default_region = str(selected_keyword.get("region_code", "US")) if selected_keyword else "US"
-    default_language = str(selected_keyword.get("language_code", "en")) if selected_keyword else "en"
+    prefill_query = str(st.session_state.pop("market_prefill_query", ""))
+    prefill_region = str(st.session_state.pop("market_prefill_region", ""))
+    prefill_language = str(st.session_state.pop("market_prefill_language", ""))
+    default_query = str(selected_keyword.get("keyword", "")) if selected_keyword else prefill_query
+    default_region = str(selected_keyword.get("region_code", "US")) if selected_keyword else (prefill_region or "US")
+    default_language = str(selected_keyword.get("language_code", "en")) if selected_keyword else (prefill_language or "en")
     default_type = str(selected_keyword.get("video_type", "all")) if selected_keyword else "all"
     default_days = int(selected_keyword.get("period_days", 30) or 30) if selected_keyword else 30
     default_limit = int(selected_keyword.get("result_limit", 24) or 24) if selected_keyword else 24

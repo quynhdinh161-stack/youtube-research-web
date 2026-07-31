@@ -217,6 +217,47 @@ class YouTubeDataAPI:
         order_map = {v: i for i, v in enumerate(ids)}
         return sorted(rows, key=lambda x: order_map.get(x["video_id"], 9999))
 
+    def fetch_most_popular_videos(
+        self,
+        region_code: str = "US",
+        category_id: str | None = None,
+        max_results: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Fetch YouTube's current most-popular chart without a search keyword.
+
+        This uses videos.list(chart=mostPopular), which costs only 1 quota unit per
+        request and is therefore suitable as a seed for true market discovery.
+        """
+        params: dict[str, Any] = {
+            "part": "snippet,statistics,contentDetails",
+            "chart": "mostPopular",
+            "regionCode": (region_code or "US").upper(),
+            "maxResults": max(1, min(int(max_results), 50)),
+        }
+        if category_id:
+            params["videoCategoryId"] = str(category_id)
+        data = self._get("videos", params)
+        rows: list[dict[str, Any]] = []
+        for item in data.get("items", []):
+            snippet = item.get("snippet", {})
+            stats = item.get("statistics", {})
+            rows.append({
+                "video_id": item.get("id", ""),
+                "channel_id": snippet.get("channelId", ""),
+                "channel_title": snippet.get("channelTitle", ""),
+                "title": snippet.get("title", ""),
+                "published_at": snippet.get("publishedAt"),
+                "view_count": to_int(stats.get("viewCount")),
+                "like_count": to_int(stats.get("likeCount")),
+                "comment_count": to_int(stats.get("commentCount")),
+                "duration": item.get("contentDetails", {}).get("duration", ""),
+                "thumbnail_url": self._best_thumbnail(snippet.get("thumbnails", {})),
+                "default_language": snippet.get("defaultLanguage", ""),
+                "default_audio_language": snippet.get("defaultAudioLanguage", ""),
+                "category_id": snippet.get("categoryId", ""),
+            })
+        return rows
+
     @staticmethod
     def _best_thumbnail(thumbnails: dict[str, Any]) -> str:
         for key in ("maxres", "standard", "high", "medium", "default"):

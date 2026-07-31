@@ -112,3 +112,9 @@ Con số thực tế có thể chênh nhẹ theo số lượng kênh và lỗi A
 ## V3.2 - Chọn nhiều quốc gia/ngôn ngữ
 
 Trang **Toàn thị trường** cho phép chọn nhiều `Quốc gia` và nhiều `Ngôn ngữ` trong một lần quét. Vì YouTube Data API chỉ nhận một `regionCode` và một `relevanceLanguage` trên mỗi lần `search.list`, ứng dụng sẽ quét từng tổ hợp rồi gộp video trùng để hiển thị. Mỗi lần giới hạn tối đa 12 tổ hợp để kiểm soát quota. Trang **Từ khóa đã lưu** cũng hỗ trợ lưu nhiều tổ hợp cùng lúc. Không cần SQL migration mới.
+
+## V3.3 — Tự tìm từ khóa trực tiếp từ thị trường
+Trang **Toàn thị trường** có chế độ **🔥 Tự tìm từ khóa đang nổi trên thị trường**. Chế độ này lấy mẫu trực tiếp từ `videos.list(chart=mostPopular)` của YouTube theo quốc gia/category, không dùng 185 kênh theo dõi và không dùng danh sách từ khóa đã lưu làm seed. YouTube không cung cấp search volume chính xác; điểm hiển thị là market-signal score từ mẫu video phổ biến.
+
+## V3.3 — Tự tìm từ khóa trực tiếp từ thị trường
+Trang **Toàn thị trường** có chế độ **🔥 Tự tìm từ khóa đang nổi trên thị trường**. Chế độ này lấy mẫu trực tiếp từ `videos.list(chart=mostPopular)` của YouTube theo quốc gia/category, không dùng 185 kênh theo dõi và không dùng danh sách từ khóa đã lưu làm seed. YouTube không cung cấp search volume chính xác; điểm hiển thị là market-signal score từ mẫu video phổ biến.

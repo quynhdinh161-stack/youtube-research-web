@@ -121,6 +121,27 @@ _COUNTRY_LANGUAGE = {
 }
 
 
+# YouTube video category IDs used for market-native discovery. These requests use
+# videos.list(chart=mostPopular), so they do not depend on saved keywords or the
+# tracked-channel list.
+MARKET_DISCOVERY_CATEGORIES: dict[str, str] = {
+    "1": "Film & Animation",
+    "2": "Autos & Vehicles",
+    "10": "Music",
+    "15": "Pets & Animals",
+    "17": "Sports",
+    "19": "Travel & Events",
+    "20": "Gaming",
+    "22": "People & Blogs",
+    "23": "Comedy",
+    "24": "Entertainment",
+    "25": "News & Politics",
+    "26": "Howto & Style",
+    "27": "Education",
+    "28": "Science & Technology",
+}
+
+
 def _title_tokens(value: str) -> list[str]:
     cleaned = html.unescape(str(value or "")).lower().replace("&", " and ")
     return [
@@ -173,6 +194,198 @@ def _candidate_phrases(title: str) -> set[str]:
                 candidates.add(phrase)
     return candidates
 
+
+
+def discover_keywords_from_youtube_market(
+    api: YouTubeDataAPI,
+    *,
+    region_codes: list[str],
+    language_codes: list[str] | None = None,
+    category_ids: list[str] | None = None,
+    top_n: int = 50,
+    videos_per_category: int = 50,
+) -> dict[str, Any]:
+    """Discover keyword candidates directly from YouTube's current market charts.
+
+    No saved keyword and no tracked channel is used as a seed. The function samples
+    videos.list(chart=mostPopular) across the selected countries/categories, extracts
+    repeated 2-4 word phrases from current titles, and ranks them by repetition,
+    channel diversity, region/category diversity, recency and views/day.
+
+    This is *not* YouTube search volume. It is a market-signal score derived from the
+    current most-popular video sample returned by the YouTube Data API.
+    """
+    regions = [str(x).upper().strip() for x in (region_codes or ["US"]) if str(x).strip()]
+    regions = list(dict.fromkeys(regions))[:6]
+    languages = [str(x).lower().strip() for x in (language_codes or []) if str(x).strip()]
+    categories = [str(x).strip() for x in (category_ids or list(MARKET_DISCOVERY_CATEGORIES)) if str(x).strip()]
+    categories = list(dict.fromkeys(categories))[:20]
+    if not regions:
+        regions = ["US"]
+    if not categories:
+        categories = list(MARKET_DISCOVERY_CATEGORIES)
+
+    started_units = int(getattr(api, "quota_units_estimated", 0))
+    raw_by_id: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    for region in regions:
+        for category_id in categories:
+            try:
+                rows = api.fetch_most_popular_videos(
+                    region_code=region,
+                    category_id=category_id,
+                    max_results=max(1, min(int(videos_per_category), 50)),
+                )
+            except Exception as exc:
+                errors.append(f"{region}/{category_id}: {exc}")
+                continue
+            for row in rows:
+                video_id = str(row.get("video_id", ""))
+                if not video_id:
+                    continue
+                inferred_language = _infer_language(str(row.get("title", "")), region)
+                explicit_language = str(
+                    row.get("default_audio_language") or row.get("default_language") or ""
+                ).lower().split("-")[0]
+                language = explicit_language or inferred_language
+                if languages and language not in languages and inferred_language not in languages:
+                    continue
+                if video_id not in raw_by_id:
+                    merged = dict(row)
+                    merged["regions"] = {region}
+                    merged["sampled_categories"] = {category_id}
+                    merged["market_language"] = language
+                    raw_by_id[video_id] = merged
+                else:
+                    raw_by_id[video_id]["regions"].add(region)
+                    raw_by_id[video_id]["sampled_categories"].add(category_id)
+
+    now = datetime.now(timezone.utc)
+    stats: dict[str, dict[str, Any]] = {}
+    for video in raw_by_id.values():
+        title = str(video.get("title", "")).strip()
+        video_id = str(video.get("video_id", ""))
+        channel_id = str(video.get("channel_id", ""))
+        if not title or not video_id or not channel_id:
+            continue
+        published = parse_datetime(video.get("published_at"))
+        age_days = max(
+            1 / 24,
+            ((now - published).total_seconds() / 86400) if published else 1.0,
+        )
+        views = int(video.get("view_count", 0) or 0)
+        views_per_day = int(views / age_days)
+        # Popular chart is already a strong signal; logarithmic performance weight
+        # prevents one giant music video from completely dominating the ranking.
+        performance_weight = 1.0 + min(5.5, math.log10(max(views_per_day, 1) + 1))
+        recency_weight = max(0.45, 1.25 - min(age_days, 60) / 75)
+        base_weight = performance_weight * recency_weight
+        for phrase in _candidate_phrases(title):
+            row = stats.setdefault(
+                phrase,
+                {
+                    "keyword": phrase,
+                    "normalized_keyword": normalize_keyword(phrase),
+                    "score": 0.0,
+                    "video_ids": set(),
+                    "channel_ids": set(),
+                    "regions": set(),
+                    "categories": set(),
+                    "languages": Counter(),
+                    "titles": [],
+                    "total_views": 0,
+                    "total_views_per_day": 0,
+                },
+            )
+            if video_id in row["video_ids"]:
+                continue
+            phrase_size = len(phrase.split())
+            length_factor = {2: 1.14, 3: 1.06, 4: 0.96}.get(phrase_size, 1.0)
+            row["score"] += base_weight * length_factor
+            row["video_ids"].add(video_id)
+            row["channel_ids"].add(channel_id)
+            row["regions"].update(video.get("regions") or set())
+            row["categories"].update(video.get("sampled_categories") or set())
+            row["languages"][str(video.get("market_language") or "en")] += 1
+            if len(row["titles"]) < 4:
+                row["titles"].append(title)
+            row["total_views"] += views
+            row["total_views_per_day"] += views_per_day
+
+    candidates: list[dict[str, Any]] = []
+    for row in stats.values():
+        video_count = len(row["video_ids"])
+        channel_count = len(row["channel_ids"])
+        # Repetition across two different videos is the preferred market signal.
+        if video_count < 2 and channel_count < 2:
+            continue
+        region_count = len(row["regions"])
+        category_count = len(row["categories"])
+        diversity_bonus = 1.0 + min(0.8, 0.12 * max(0, channel_count - 1))
+        diversity_bonus += min(0.45, 0.08 * max(0, region_count - 1))
+        diversity_bonus += min(0.35, 0.05 * max(0, category_count - 1))
+        score = float(row["score"]) * diversity_bonus
+        language = row["languages"].most_common(1)[0][0] if row["languages"] else "en"
+        regions_sorted = sorted(row["regions"])
+        categories_sorted = sorted(row["categories"])
+        candidates.append(
+            {
+                "keyword": row["keyword"],
+                "normalized_keyword": row["normalized_keyword"],
+                "market_score": round(score, 2),
+                "video_count": video_count,
+                "channel_count": channel_count,
+                "region_count": region_count,
+                "category_count": category_count,
+                "regions": ", ".join(regions_sorted),
+                "category_names": ", ".join(
+                    MARKET_DISCOVERY_CATEGORIES.get(x, x) for x in categories_sorted[:4]
+                ),
+                "language_code": language,
+                "total_views": int(row["total_views"]),
+                "average_views_per_day": int(row["total_views_per_day"] / max(1, video_count)),
+                "sample_titles": list(row["titles"][:3]),
+                "primary_region": regions_sorted[0] if regions_sorted else regions[0],
+            }
+        )
+
+    candidates.sort(
+        key=lambda row: (
+            int(row["channel_count"]),
+            int(row["video_count"]),
+            int(row["region_count"]),
+            float(row["market_score"]),
+            int(row["average_views_per_day"]),
+        ),
+        reverse=True,
+    )
+
+    selected: list[dict[str, Any]] = []
+    token_sets: list[set[str]] = []
+    for row in candidates:
+        tokens = set(_title_tokens(str(row["keyword"])))
+        if any(
+            len(tokens & prior) / max(1, min(len(tokens), len(prior))) >= 0.66
+            for prior in token_sets
+        ):
+            continue
+        selected.append(row)
+        token_sets.append(tokens)
+        if len(selected) >= max(1, min(int(top_n), 200)):
+            break
+
+    used_units = max(0, int(getattr(api, "quota_units_estimated", 0)) - started_units)
+    return {
+        "candidates": selected,
+        "videos_analyzed": len(raw_by_id),
+        "requests_attempted": len(regions) * len(categories),
+        "api_units_estimated": used_units,
+        "errors": errors,
+        "regions": regions,
+        "languages": languages,
+        "categories": categories,
+        "discovered_at": now.isoformat(),
+    }
 
 def discover_market_keywords(
     videos: list[dict[str, Any]],
