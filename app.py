@@ -1065,6 +1065,13 @@ def latest_timestamp(channels: list[dict[str, Any]], videos: list[dict[str, Any]
     return human_datetime(max(candidates).isoformat())
 
 
+# Apply a requested page change before the navigation widget is instantiated.
+# Streamlit does not allow mutating a widget-backed session_state key after
+# that widget has already been created in the same rerun.
+_pending_nav = st.session_state.pop("_pending_navigation", None)
+if _pending_nav in NAV_OPTIONS:
+    st.session_state["main_navigation"] = _pending_nav
+
 with st.sidebar:
     st.markdown("## 🔎 YouTube Research")
     st.caption("Dashboard 2-in-1 nghiên cứu YouTube")
@@ -2607,7 +2614,7 @@ elif nav == "Từ khóa tăng trong tuần":
         if st.button("Mở trong Toàn thị trường", key="keyword_growth_open_button"):
             st.session_state["market_open_keyword_id"] = int(selected_growth_id)
             st.session_state["market_results"] = []
-            st.session_state["main_navigation"] = "Toàn thị trường"
+            st.session_state["_pending_navigation"] = "Toàn thị trường"
             st.rerun()
 elif nav == "Từ khóa đã lưu":
     st.caption(
@@ -2812,7 +2819,7 @@ elif nav == "Từ khóa đã lưu":
             ):
                 st.session_state["market_open_keyword_id"] = int(selected_keyword["id"])
                 st.session_state["market_results"] = []
-                st.session_state["main_navigation"] = "Toàn thị trường"
+                st.session_state["_pending_navigation"] = "Toàn thị trường"
                 st.rerun()
         with actions[2]:
             toggle_label = "Tạm dừng" if selected_keyword.get("is_active") else "Kích hoạt"
