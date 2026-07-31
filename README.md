@@ -108,3 +108,7 @@ Con số thực tế có thể chênh nhẹ theo số lượng kênh và lỗi A
 - Từ **Tổng quan**, bấm trực tiếp **Tự khám phá thị trường** để chạy cấu hình mặc định: 5 từ khóa, dữ liệu nguồn 30 ngày, tìm thị trường 30 ngày, 12 kết quả/từ khóa, không phân tích sâu.
 - Hoặc mở **Toàn thị trường** để thay đổi số từ khóa, thời gian, số kết quả và mức phân tích sâu trước khi bấm.
 - Các từ khóa tự phát hiện xuất hiện trong **Từ khóa đã lưu** và dùng chung các trang Video vượt trội, Kênh mới nổi, Shorts và Từ khóa tăng trong tuần.
+
+## V3.2 - Chọn nhiều quốc gia/ngôn ngữ
+
+Trang **Toàn thị trường** cho phép chọn nhiều `Quốc gia` và nhiều `Ngôn ngữ` trong một lần quét. Vì YouTube Data API chỉ nhận một `regionCode` và một `relevanceLanguage` trên mỗi lần `search.list`, ứng dụng sẽ quét từng tổ hợp rồi gộp video trùng để hiển thị. Mỗi lần giới hạn tối đa 12 tổ hợp để kiểm soát quota. Trang **Từ khóa đã lưu** cũng hỗ trợ lưu nhiều tổ hợp cùng lúc. Không cần SQL migration mới.

@@ -508,6 +508,133 @@ def execute_market_scan_ui(
 
 
 
+def execute_market_multi_scan_ui(
+    *,
+    store: SupabaseStore,
+    api: YouTubeDataAPI | None,
+    query: str,
+    region_codes: list[str],
+    language_codes: list[str],
+    video_type: str,
+    period_days: int,
+    result_limit: int,
+    subject: str,
+    niche: str,
+    keyword_ids: dict[tuple[str, str], int | None],
+    deep_channel_limit: int,
+    order: str,
+    force_refresh: bool,
+    primary_keyword_id: int | None = None,
+) -> dict[str, Any] | None:
+    """Run one market scan for every selected country/language combination.
+
+    YouTube Data API accepts one regionCode and one relevanceLanguage per search.list
+    call, so multi-select is implemented as several scans and then de-duplicated for
+    display. Each scan is still stored separately in Supabase, preserving growth
+    history by market.
+    """
+    if not api:
+        st.error("Chưa cấu hình YOUTUBE_API_KEY trong Streamlit Secrets.")
+        return None
+
+    combinations = [(r, l) for r in region_codes for l in language_codes]
+    if not combinations:
+        st.warning("Hãy chọn ít nhất 1 quốc gia và 1 ngôn ngữ.")
+        return None
+    if len(combinations) > 12:
+        st.error(
+            f"Bạn đang chọn {len(combinations)} tổ hợp quốc gia/ngôn ngữ. "
+            "Để tránh dùng quá nhiều quota, mỗi lần chỉ quét tối đa 12 tổ hợp."
+        )
+        return None
+
+    progress = st.progress(0.0)
+    status = st.empty()
+    all_results: dict[str, dict[str, Any]] = {}
+    scans: list[dict[str, Any]] = []
+    cached_count = 0
+    errors: list[str] = []
+
+    for index, (region_code, language_code) in enumerate(combinations, start=1):
+        status.info(
+            f"Đang quét {index}/{len(combinations)} · {region_code} · {language_code}"
+        )
+        try:
+            outcome = run_market_scan(
+                store,
+                api,
+                query=query,
+                region_code=region_code,
+                language_code=language_code,
+                video_type=video_type,
+                period_days=int(period_days),
+                result_limit=int(result_limit),
+                subject=subject,
+                niche=niche,
+                keyword_id=keyword_ids.get((region_code, language_code)),
+                deep_channel_limit=int(deep_channel_limit),
+                order=order,
+                force_refresh=force_refresh,
+            )
+            scans.append(outcome["scan"])
+            if outcome.get("from_cache"):
+                cached_count += 1
+            market_label = f"{region_code}/{language_code}"
+            for result in outcome.get("results", []):
+                video_id = str(result.get("video_id", ""))
+                if not video_id:
+                    continue
+                if video_id not in all_results:
+                    merged = dict(result)
+                    merged["matched_markets"] = market_label
+                    all_results[video_id] = merged
+                else:
+                    labels = {
+                        x.strip()
+                        for x in str(all_results[video_id].get("matched_markets", "")).split(",")
+                        if x.strip()
+                    }
+                    labels.add(market_label)
+                    all_results[video_id]["matched_markets"] = ", ".join(sorted(labels))
+        except Exception as exc:
+            errors.append(f"{region_code}/{language_code}: {exc}")
+        progress.progress(index / max(1, len(combinations)))
+
+    status.empty()
+    progress.empty()
+    clear_saved_data_cache()
+
+    merged_results = list(all_results.values())
+    if order == "date":
+        merged_results.sort(key=lambda row: row.get("published_at") or "", reverse=True)
+    elif order == "relevance":
+        merged_results.sort(key=lambda row: int(row.get("views_per_day", 0) or 0), reverse=True)
+    else:
+        merged_results.sort(key=lambda row: int(row.get("view_count", 0) or 0), reverse=True)
+
+    scan_ids = [int(row["id"]) for row in scans if row.get("id") is not None]
+    st.session_state["market_active_scan_ids"] = scan_ids
+    st.session_state["market_active_scan_id"] = scan_ids[-1] if scan_ids else None
+    st.session_state["market_active_keyword_id"] = primary_keyword_id
+    st.session_state["market_results"] = merged_results
+
+    total_units = sum(int(row.get("api_units_estimated", 0) or 0) for row in scans)
+    if scans:
+        st.success(
+            f"Đã quét {len(scans)}/{len(combinations)} tổ hợp, gộp còn "
+            f"{len(merged_results)} video không trùng. Quota ước tính đã dùng: {total_units}."
+            + (f" {cached_count} tổ hợp dùng cache." if cached_count else "")
+        )
+    if errors:
+        with st.expander(f"Có {len(errors)} tổ hợp quét lỗi"):
+            for error in errors:
+                st.write(error)
+    if not scans:
+        st.error("Không quét được tổ hợp nào.")
+        return None
+    return {"scans": scans, "results": merged_results, "errors": errors}
+
+
 def render_auto_discovery_summary() -> None:
     summary = st.session_state.get("auto_discovery_summary")
     if not summary:
@@ -1391,18 +1518,20 @@ elif nav == "Toàn thị trường":
                 key=f"market_query_{config_key}",
             ).strip()
         with top[1]:
-            region = st.selectbox(
+            regions = st.multiselect(
                 "Quốc gia",
                 region_options,
-                index=region_options.index(default_region) if default_region in region_options else 0,
+                default=[default_region] if default_region in region_options else ["US"],
                 key=f"market_region_{config_key}",
+                help="Có thể chọn nhiều quốc gia. Tool sẽ quét riêng từng tổ hợp quốc gia/ngôn ngữ rồi gộp video trùng.",
             )
         with top[2]:
-            language = st.selectbox(
+            languages = st.multiselect(
                 "Ngôn ngữ",
                 language_options,
-                index=language_options.index(default_language) if default_language in language_options else 0,
+                default=[default_language] if default_language in language_options else ["en"],
                 key=f"market_language_{config_key}",
+                help="Có thể chọn nhiều ngôn ngữ trong cùng một lần nghiên cứu thị trường.",
             )
         with top[3]:
             video_type = st.selectbox(
@@ -1472,9 +1601,12 @@ elif nav == "Toàn thị trường":
             disabled=selected_keyword is not None,
             key=f"market_save_before_{config_key}",
         )
+        combination_count = len(regions) * len(languages)
+        estimated_per_combination = estimate_market_scan_units(int(deep_limit), int(search_limit))
         st.caption(
-            f"Ước tính mỗi lần quét dùng khoảng {estimate_market_scan_units(int(deep_limit), int(search_limit))} quota units. "
-            "YouTube không cung cấp lượng tìm kiếm từ khóa chính xác; tool phân tích mẫu video thu thập được."
+            f"Đang chọn {combination_count} tổ hợp quốc gia/ngôn ngữ · "
+            f"ước tính tối đa khoảng {estimated_per_combination * combination_count} quota units. "
+            "YouTube chỉ nhận 1 quốc gia + 1 ngôn ngữ cho mỗi search.list, nên tool sẽ quét từng tổ hợp rồi gộp kết quả."
         )
         scan_submitted = st.form_submit_button(
             "Quét toàn thị trường",
@@ -1485,46 +1617,77 @@ elif nav == "Toàn thị trường":
 
     if scan_submitted and not query:
         st.warning("Hãy nhập từ khóa thị trường trước khi quét.")
+    elif scan_submitted and (not regions or not languages):
+        st.warning("Hãy chọn ít nhất 1 quốc gia và 1 ngôn ngữ.")
+    elif scan_submitted and len(regions) * len(languages) > 12:
+        st.error(
+            f"Bạn đang chọn {len(regions) * len(languages)} tổ hợp. "
+            "Mỗi lần chỉ cho phép tối đa 12 tổ hợp để tránh tiêu hao quota quá nhanh."
+        )
     elif scan_submitted:
-        keyword_id = int(selected_keyword["id"]) if selected_keyword else None
-        if save_before_scan and selected_keyword is None:
-            try:
-                saved = store.upsert_market_keyword(
-                    build_keyword_payload(
-                        keyword=query,
-                        subject=subject_value,
-                        niche=niche_value,
-                        region_code=region,
-                        language_code=language,
-                        video_type=video_type,
-                        period_days=int(days),
-                        result_limit=int(search_limit),
-                    )
-                )
-                keyword_id = int(saved["id"])
-                clear_saved_data_cache()
-            except Exception as exc:
-                st.error(f"Không lưu được từ khóa: {exc}")
+        combinations = [(region_code, language_code) for region_code in regions for language_code in languages]
+        keyword_ids: dict[tuple[str, str], int | None] = {}
+        primary_keyword_id = int(selected_keyword["id"]) if selected_keyword else None
+
+        if save_before_scan:
+            save_errors: list[str] = []
+            for region_code, language_code in combinations:
+                try:
+                    if (
+                        selected_keyword
+                        and region_code == default_region
+                        and language_code == default_language
+                    ):
+                        saved = selected_keyword
+                    else:
+                        saved = store.upsert_market_keyword(
+                            build_keyword_payload(
+                                keyword=query,
+                                subject=subject_value,
+                                niche=niche_value,
+                                region_code=region_code,
+                                language_code=language_code,
+                                video_type=video_type,
+                                period_days=int(days),
+                                result_limit=int(search_limit),
+                            )
+                        )
+                    keyword_ids[(region_code, language_code)] = int(saved["id"])
+                    if primary_keyword_id is None:
+                        primary_keyword_id = int(saved["id"])
+                except Exception as exc:
+                    keyword_ids[(region_code, language_code)] = None
+                    save_errors.append(f"{region_code}/{language_code}: {exc}")
+            clear_saved_data_cache()
+            if save_errors:
+                with st.expander(f"Có {len(save_errors)} lựa chọn chưa lưu được"):
+                    for error in save_errors:
+                        st.write(error)
+        else:
+            keyword_ids = {combo: None for combo in combinations}
+
         order_map = {"Lượt xem": "viewCount", "Mới nhất": "date", "Liên quan": "relevance"}
-        execute_market_scan_ui(
+        execute_market_multi_scan_ui(
             store=store,
             api=api,
             query=query,
-            region_code=region,
-            language_code=language,
+            region_codes=list(regions),
+            language_codes=list(languages),
             video_type=video_type,
             period_days=int(days),
             result_limit=int(search_limit),
             subject=subject_value,
             niche=niche_value,
-            keyword_id=keyword_id,
+            keyword_ids=keyword_ids,
             deep_channel_limit=int(deep_limit),
             order=order_map[order_label],
             force_refresh=bool(force_refresh),
+            primary_keyword_id=primary_keyword_id,
         )
 
     market_results = st.session_state.get("market_results", [])
     active_scan_id = st.session_state.get("market_active_scan_id")
+    active_scan_ids = st.session_state.get("market_active_scan_ids", [])
     if selected_keyword and st.session_state.get("market_active_keyword_id") != int(selected_keyword["id"]):
         market_results = []
     if selected_keyword and not market_results:
@@ -1533,6 +1696,7 @@ elif nav == "Toàn thị trường":
             active_scan_id = int(scans[0]["id"])
             market_results = store.list_market_results(scan_id=active_scan_id, limit=50)
             st.session_state["market_active_scan_id"] = active_scan_id
+            st.session_state["market_active_scan_ids"] = [active_scan_id]
             st.session_state["market_active_keyword_id"] = int(selected_keyword["id"])
             st.session_state["market_results"] = market_results
 
@@ -1542,6 +1706,11 @@ elif nav == "Toàn thị trường":
             (row for row in scans if int(row.get("id", 0) or 0) == int(active_scan_id or 0)),
             None,
         )
+        active_scan_id_set = {int(value) for value in active_scan_ids if value is not None}
+        active_scans = [
+            row for row in scans
+            if int(row.get("id", 0) or 0) in active_scan_id_set
+        ]
         metrics = st.columns(5)
         metrics[0].metric("Video tìm thấy", len(market_results))
         metrics[1].metric(
@@ -1563,7 +1732,11 @@ elif nav == "Toàn thị trường":
         )
         metrics[4].metric(
             "Quota đã dùng",
-            int(active_scan.get("api_units_estimated", 0) or 0) if active_scan else "—",
+            (
+                sum(int(row.get("api_units_estimated", 0) or 0) for row in active_scans)
+                if active_scans
+                else (int(active_scan.get("api_units_estimated", 0) or 0) if active_scan else "—")
+            ),
         )
 
         st.markdown("### Kết quả thị trường")
@@ -2256,15 +2429,17 @@ elif nav == "Từ khóa đã lưu":
                     key="saved_new_keyword",
                 ).strip()
             with row1[1]:
-                new_region = st.selectbox(
+                new_regions = st.multiselect(
                     "Quốc gia",
                     ["US", "VN", "ID", "FR", "DE", "ES", "GB", "BR", "TH", "CA", "AU", "MX"],
+                    default=["US"],
                     key="saved_new_region",
                 )
             with row1[2]:
-                new_language = st.selectbox(
+                new_languages = st.multiselect(
                     "Ngôn ngữ",
                     ["en", "vi", "es", "pt", "id", "fr", "de", "th", "ko", "ja"],
+                    default=["en"],
                     key="saved_new_language",
                 )
             with row1[3]:
@@ -2315,23 +2490,33 @@ elif nav == "Từ khóa đã lưu":
             st.warning("Đã có 20 từ khóa hoạt động. Hãy tạm dừng hoặc xóa một từ khóa trước khi thêm.")
         if add_submitted and not new_keyword:
             st.warning("Hãy nhập từ khóa trước khi lưu.")
+        elif add_submitted and (not new_regions or not new_languages):
+            st.warning("Hãy chọn ít nhất 1 quốc gia và 1 ngôn ngữ.")
+        elif add_submitted and len(new_regions) * len(new_languages) > 12:
+            st.error("Mỗi lần chỉ lưu tối đa 12 tổ hợp quốc gia/ngôn ngữ.")
         elif add_submitted:
             try:
-                store.upsert_market_keyword(
-                    build_keyword_payload(
-                        keyword=new_keyword,
-                        subject=new_subject,
-                        niche=new_niche,
-                        region_code=new_region,
-                        language_code=new_language,
-                        video_type=new_type,
-                        period_days=int(new_days),
-                        result_limit=int(new_limit),
-                        scan_cycle=new_cycle,
-                    )
-                )
+                saved_count = 0
+                for new_region in new_regions:
+                    for new_language in new_languages:
+                        store.upsert_market_keyword(
+                            build_keyword_payload(
+                                keyword=new_keyword,
+                                subject=new_subject,
+                                niche=new_niche,
+                                region_code=new_region,
+                                language_code=new_language,
+                                video_type=new_type,
+                                period_days=int(new_days),
+                                result_limit=int(new_limit),
+                                scan_cycle=new_cycle,
+                            )
+                        )
+                        saved_count += 1
                 clear_saved_data_cache()
-                st.session_state["flash_message"] = f"Đã lưu từ khóa: {new_keyword}"
+                st.session_state["flash_message"] = (
+                    f"Đã lưu {saved_count} lựa chọn thị trường cho từ khóa: {new_keyword}"
+                )
                 st.rerun()
             except Exception as exc:
                 st.error(f"Không lưu được từ khóa: {exc}")
